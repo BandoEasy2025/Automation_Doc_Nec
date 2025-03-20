@@ -1,6 +1,6 @@
 """
 Main entry point for the grant documentation crawler.
-Orchestrates the entire process of updating grant information in Supabase.
+Orchestrates the entire process of updating documentation for active grants in Supabase.
 """
 import logging
 import time
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 def process_grant(grant: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Processes a single grant to extract and update its documentation.
+    Processes a single grant to extract documentation requirements.
     Thoroughly analyzes all available information from websites and PDFs.
     
     Args:
@@ -34,7 +34,7 @@ def process_grant(grant: Dict[str, Any]) -> Dict[str, Any]:
     link_bando = grant.get('link_bando')
     link_sito_bando = grant.get('link_sito_bando')
     
-    logger.info(f"Processing grant {grant_id}")
+    logger.info(f"Processing grant {grant_id} to extract documentation requirements")
     
     # Initialize components
     web_scraper = WebScraper()
@@ -57,7 +57,7 @@ def process_grant(grant: Dict[str, Any]) -> Dict[str, Any]:
             # Extract PDF links
             pdf_links = web_scraper.extract_pdf_links(html_content, link_bando)
             
-            # Process priority PDFs first
+            # Process priority PDFs first - focus on those likely containing documentation info
             for pdf_info in pdf_links:
                 if pdf_info.get('priority', False):
                     pdf_result = pdf_processor.process_pdf(pdf_info)
@@ -126,10 +126,10 @@ def process_grant(grant: Dict[str, Any]) -> Dict[str, Any]:
     web_scraper.close()
     pdf_processor.close()
     
-    # Merge and analyze all data
+    # Merge and analyze all data with focus on documentation
     merged_data = doc_analyzer.merge_grant_data(web_data, pdf_data)
     
-    # Generate comprehensive summary
+    # Generate summary focused on documentation requirements
     documentation_summary = doc_analyzer.generate_summary(merged_data)
     
     # Update the grant with the new documentation
@@ -143,57 +143,50 @@ def main():
     parser = argparse.ArgumentParser(description='Grant Documentation Crawler')
     parser.add_argument('--log-level', default='INFO', help='Logging level')
     parser.add_argument('--max-workers', type=int, default=4, help='Maximum number of worker threads')
-    parser.add_argument('--batch-size', type=int, default=0, help='Batch size (0 for all grants)')
+    parser.add_argument('--batch-size', type=int, default=0, help='Batch size (0 for all active grants)')
     parser.add_argument('--verify-only', action='store_true', help='Only verify grant IDs exist without updating')
-    parser.add_argument('--all-grants', action='store_true', help='Process all grants regardless of status')
     args = parser.parse_args()
     
     # Set up logging
     setup_logging(args.log_level)
     
-    logger.info("Starting grant documentation crawler")
+    logger.info("Starting grant documentation crawler - focusing on active grants")
     
     try:
         # Initialize database manager
         db_manager = DatabaseManager()
         
-        # Get grants (either active only or all based on the flag)
-        if args.all_grants:
-            grants = db_manager.get_all_grants()
-            if not grants:
-                logger.info("No grants found in the database. Exiting.")
-                return
-            logger.info(f"Found {len(grants)} total grants to process")
-        else:
-            grants = db_manager.get_active_grants()
-            if not grants:
-                logger.info("No active grants found. Exiting.")
-                return
-            logger.info(f"Found {len(grants)} active grants to process")
+        # Get active grants only
+        active_grants = db_manager.get_active_grants()
+        if not active_grants:
+            logger.info("No active grants found. Exiting.")
+            return
+        
+        logger.info(f"Found {len(active_grants)} active grants to process")
         
         # Apply batch size if specified
-        if args.batch_size > 0 and args.batch_size < len(grants):
-            grants = grants[:args.batch_size]
-            logger.info(f"Processing batch of {len(grants)} grants")
+        if args.batch_size > 0 and args.batch_size < len(active_grants):
+            active_grants = active_grants[:args.batch_size]
+            logger.info(f"Processing batch of {len(active_grants)} active grants")
         
         # Verify grants exist first if requested
         if args.verify_only:
             existing_grants = 0
-            for grant in tqdm(grants, desc="Verifying grants"):
+            for grant in tqdm(active_grants, desc="Verifying grants"):
                 if db_manager.check_grant_exists(grant['id']):
                     existing_grants += 1
             
-            logger.info(f"Verified {existing_grants}/{len(grants)} grants exist in the database")
+            logger.info(f"Verified {existing_grants}/{len(active_grants)} grants exist in the database")
             return
 
         # Process grants in parallel
         processed_grants = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.max_workers) as executor:
             # Submit all grants for processing
-            future_to_grant = {executor.submit(process_grant, grant): grant for grant in grants}
+            future_to_grant = {executor.submit(process_grant, grant): grant for grant in active_grants}
             
             # Process results as they complete
-            for future in tqdm(concurrent.futures.as_completed(future_to_grant), total=len(grants), desc="Processing grants"):
+            for future in tqdm(concurrent.futures.as_completed(future_to_grant), total=len(active_grants), desc="Processing active grants"):
                 grant = future_to_grant[future]
                 try:
                     processed_grant = future.result()
@@ -201,12 +194,12 @@ def main():
                 except Exception as e:
                     logger.error(f"Error processing grant {grant.get('id')}: {str(e)}")
         
-        logger.info(f"Successfully processed {len(processed_grants)} grants")
+        logger.info(f"Successfully processed {len(processed_grants)} active grants")
         
         # Update the database with the new documentation
         updated_count = 0
         update_errors = 0
-        for grant in tqdm(processed_grants, desc="Updating database"):
+        for grant in tqdm(processed_grants, desc="Updating documentation in database"):
             try:
                 if db_manager.update_documentation(grant['id'], grant['documentation_summary']):
                     updated_count += 1
@@ -216,7 +209,7 @@ def main():
                 logger.error(f"Error updating grant {grant.get('id')}: {str(e)}")
                 update_errors += 1
         
-        logger.info(f"Updated documentation for {updated_count} grants in the database")
+        logger.info(f"Updated documentation for {updated_count} active grants in the database")
         if update_errors > 0:
             logger.warning(f"Failed to update {update_errors} grants")
         

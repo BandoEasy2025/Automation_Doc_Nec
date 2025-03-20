@@ -1,5 +1,6 @@
 """
-Analyzes and summarizes grant information extracted from websites and PDFs.
+Analyzes and summarizes grant information extracted from websites and PDFs,
+with specific focus on required documentation.
 """
 import logging
 import re
@@ -14,7 +15,7 @@ from utils import clean_text, truncate_text
 logger = logging.getLogger(__name__)
 
 class DocumentationAnalyzer:
-    """Analyzes and summarizes extracted grant information."""
+    """Analyzes and summarizes extracted grant information with focus on documentation requirements."""
     
     def __init__(self):
         """Initialize the documentation analyzer."""
@@ -27,7 +28,8 @@ class DocumentationAnalyzer:
     
     def merge_grant_data(self, web_data: List[Dict[str, Any]], pdf_data: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
-        Merges data from web pages and PDFs into a comprehensive grant overview.
+        Merges data from web pages and PDFs into a comprehensive grant overview,
+        prioritizing documentation requirements.
         
         Args:
             web_data (List[Dict[str, Any]]): Information extracted from web pages.
@@ -46,7 +48,7 @@ class DocumentationAnalyzer:
             'sections': {},
             'lists': {},
             'requirements': [],
-            'documentation': [],
+            'documentation': [],  # This is our primary focus
             'deadlines': [],
             'eligibility': [],
             'funding': [],
@@ -79,20 +81,31 @@ class DocumentationAnalyzer:
             # Merge structured info
             if 'structured_info' in data:
                 for key, value in data['structured_info'].items():
-                    all_sections[key] = value
+                    # Check if this key might contain documentation information
+                    if self._is_likely_documentation_related(key):
+                        if isinstance(value, list):
+                            merged_data['documentation'].extend(value)
+                        else:
+                            merged_data['documentation'].append(value)
+                    else:
+                        all_sections[key] = value
             
-            # Merge lists
+            # Merge lists - prioritize lists that might contain documentation info
             if 'lists' in data:
                 for key, value in data['lists'].items():
-                    if key not in merged_data['lists']:
-                        merged_data['lists'][key] = value
+                    if self._is_likely_documentation_related(key):
+                        # Add directly to documentation if related to documentation
+                        merged_data['documentation'].extend(value)
                     else:
-                        # Combine lists, removing duplicates
-                        existing_items = set(str(item) for item in merged_data['lists'][key])
-                        for item in value:
-                            if str(item) not in existing_items:
-                                merged_data['lists'][key].append(item)
-                                existing_items.add(str(item))
+                        if key not in merged_data['lists']:
+                            merged_data['lists'][key] = value
+                        else:
+                            # Combine lists, removing duplicates
+                            existing_items = set(str(item) for item in merged_data['lists'][key])
+                            for item in value:
+                                if str(item) not in existing_items:
+                                    merged_data['lists'][key].append(item)
+                                    existing_items.add(str(item))
             
             # Merge tables - just add them, as tables are harder to merge
             if 'tables' in data and data['tables']:
@@ -101,12 +114,24 @@ class DocumentationAnalyzer:
                     merged_data['tables'] = []
                 
                 for table_key, table_data in data['tables'].items():
+                    # Check if table might contain documentation info
+                    if self._is_likely_documentation_related(table_key):
+                        # Try to extract documentation info from table
+                        if isinstance(table_data, list):
+                            for row in table_data:
+                                if isinstance(row, dict):
+                                    for col_key, col_value in row.items():
+                                        if self._is_likely_documentation_related(col_key):
+                                            merged_data['documentation'].append(f"{col_key}: {col_value}")
+                                elif isinstance(row, list) and len(row) > 0:
+                                    merged_data['documentation'].append(" - ".join(str(cell) for cell in row))
+                    
                     merged_data['tables'].append({
                         'title': table_key,
                         'data': table_data
                     })
         
-        # Process PDF data
+        # Process PDF data with a specific focus on documentation
         for data in pdf_data:
             # Keep track of PDF sources
             if data.get('source'):
@@ -117,55 +142,146 @@ class DocumentationAnalyzer:
                 }
                 merged_data['pdf_sources'].append(pdf_info)
             
-            # Merge sections
+            # Merge sections, prioritizing documentation-related ones
             if 'sections' in data:
                 for key, value in data['sections'].items():
-                    all_sections[key] = value
+                    if self._is_likely_documentation_related(key):
+                        # If it seems documentation-related, add to documentation
+                        merged_data['documentation'].append(f"{key}: {value}")
+                    else:
+                        all_sections[key] = value
             
-            # Merge lists
+            # Merge lists, prioritizing documentation-related ones
             if 'lists' in data and data['lists']:
                 for items in data['lists']:
                     list_title = "Informazioni dal PDF"
                     if data.get('context'):
                         list_title = data['context']
                     
-                    if list_title not in merged_data['lists']:
-                        merged_data['lists'][list_title] = items
+                    # Check if this list might be documentation-related
+                    if self._is_likely_documentation_related(list_title):
+                        merged_data['documentation'].extend(items)
                     else:
-                        existing_items = set(str(item) for item in merged_data['lists'][list_title])
-                        for item in items:
-                            if str(item) not in existing_items:
-                                merged_data['lists'][list_title].append(item)
-                                existing_items.add(str(item))
+                        if list_title not in merged_data['lists']:
+                            merged_data['lists'][list_title] = items
+                        else:
+                            existing_items = set(str(item) for item in merged_data['lists'][list_title])
+                            for item in items:
+                                if str(item) not in existing_items:
+                                    merged_data['lists'][list_title].append(item)
+                                    existing_items.add(str(item))
             
             # Extract topic-specific information from PDFs
             for key in data.keys():
-                search_terms = ['document', 'allegat', 'modulistic', 'certificaz', 'requisit', 'necessari', 'obblig', 'scadenz', 'termin', 'tempistic', 'deadline', 'beneficiari', 'destinatari', 'ammissibil', 'eligibil', 'contribut', 'finanz', 'budget', 'fond', 'spese']
+                # Expanded list of documentation-related terms
+                documentation_terms = [
+                    'document', 'allegat', 'modulistic', 'certificaz', 'modulo', 'moduli',
+                    'domanda', 'presentazione', 'istanza', 'dichiaraz', 'autocertificaz',
+                    'documentazione', 'necessari', 'richiesta', 'obbligatori'
+                ]
+                
+                search_terms = ['document', 'allegat', 'modulistic', 'certificaz', 'requisit', 
+                               'necessari', 'obblig', 'scadenz', 'termin', 'tempistic', 
+                               'deadline', 'beneficiari', 'destinatari', 'ammissibil', 
+                               'eligibil', 'contribut', 'finanz', 'budget', 'fond', 'spese']
+                
                 if key in search_terms and isinstance(data[key], list):
-                    category = self._categorize_information(key, data[key])
-                    if category:
-                        merged_data[category].extend(data[key])
+                    # Prioritize documentation-related terms
+                    if any(term in key.lower() for term in documentation_terms):
+                        merged_data['documentation'].extend(data[key])
+                    else:
+                        category = self._categorize_information(key, data[key])
+                        if category:
+                            merged_data[category].extend(data[key])
+        
+        # Further process the main content to look for documentation mentions
+        if merged_data.get('overview'):
+            doc_mentions = self._extract_documentation_mentions(merged_data['overview'])
+            if doc_mentions:
+                merged_data['documentation'].extend(doc_mentions)
         
         # Categorize all the sections
         for key, value in all_sections.items():
-            # Handle sections as either text or lists
-            if isinstance(value, list):
-                category = self._categorize_information(key, value)
-                if category:
-                    merged_data[category].extend(value)
-            else:
-                category = self._categorize_information(key, [value])
-                if category:
-                    merged_data[category].append(value)
+            # Prioritize documentation-related sections
+            if self._is_likely_documentation_related(key):
+                if isinstance(value, list):
+                    merged_data['documentation'].extend(value)
                 else:
-                    merged_data['sections'][key] = value
+                    merged_data['documentation'].append(value)
+            else:
+                # Handle sections as either text or lists
+                if isinstance(value, list):
+                    category = self._categorize_information(key, value)
+                    if category:
+                        merged_data[category].extend(value)
+                else:
+                    category = self._categorize_information(key, [value])
+                    if category:
+                        merged_data[category].append(value)
+                    else:
+                        merged_data['sections'][key] = value
         
         # Remove duplicate information in each category
         for category in ['requirements', 'documentation', 'deadlines', 'eligibility', 'funding']:
             if merged_data[category]:
                 merged_data[category] = list(dict.fromkeys(merged_data[category]))
         
+        # If there's very little information in documentation, look in requirements and eligibility
+        if len(merged_data['documentation']) < 2 and (merged_data['requirements'] or merged_data['eligibility']):
+            logger.info("Limited documentation info found, checking requirements and eligibility for potential documentation")
+            # Check requirements for documentation-related information
+            doc_from_req = [req for req in merged_data['requirements'] if self._is_likely_documentation_related(req)]
+            merged_data['documentation'].extend(doc_from_req)
+            
+            # Check eligibility for documentation-related information
+            doc_from_elig = [elig for elig in merged_data['eligibility'] if self._is_likely_documentation_related(elig)]
+            merged_data['documentation'].extend(doc_from_elig)
+        
         return merged_data
+    
+    def _is_likely_documentation_related(self, text: str) -> bool:
+        """
+        Checks if a text is likely related to documentation requirements.
+        
+        Args:
+            text (str): The text to check.
+            
+        Returns:
+            bool: True if likely documentation-related, False otherwise.
+        """
+        text_lower = text.lower()
+        documentation_terms = [
+            'document', 'allegat', 'modulistic', 'certificaz', 'modulo', 'moduli',
+            'domanda', 'presentazione', 'istanza', 'dichiaraz', 'autocertificaz',
+            'documentazione', 'necessari', 'richiesta', 'obbligatori'
+        ]
+        
+        return any(term in text_lower for term in documentation_terms)
+    
+    def _extract_documentation_mentions(self, text: str) -> List[str]:
+        """
+        Extracts sentences that mention documentation from a text.
+        
+        Args:
+            text (str): The text to extract from.
+            
+        Returns:
+            List[str]: List of sentences mentioning documentation.
+        """
+        documentation_terms = [
+            'document', 'allegat', 'modulistic', 'certificaz', 'modulo', 'moduli',
+            'domanda', 'presentazione', 'istanza', 'dichiaraz', 'autocertificaz',
+            'documentazione', 'necessari', 'richiesta', 'obbligatori'
+        ]
+        
+        sentences = sent_tokenize(text)
+        doc_mentions = []
+        
+        for sentence in sentences:
+            if any(term in sentence.lower() for term in documentation_terms):
+                doc_mentions.append(clean_text(sentence))
+        
+        return doc_mentions
     
     def _categorize_information(self, key: str, values: List[str]) -> Optional[str]:
         """
@@ -180,8 +296,10 @@ class DocumentationAnalyzer:
         """
         key_lower = key.lower()
         
-        # Document/requirements related
-        if any(term in key_lower for term in ['document', 'allegat', 'modulistic', 'certificaz']):
+        # Document/requirements related - expanded list of terms
+        if any(term in key_lower for term in ['document', 'allegat', 'modulistic', 'certificaz', 
+                                             'modulo', 'moduli', 'domanda', 'presentazione', 
+                                             'istanza', 'dichiaraz', 'autocertificaz']):
             return 'documentation'
         
         # Requirements related
@@ -205,7 +323,8 @@ class DocumentationAnalyzer:
             text = ' '.join(values)
             text_lower = text.lower()
             
-            if re.search(r'document|allegat|modulistic|certificaz', text_lower):
+            # Expanded documentation-related terms
+            if re.search(r'document|allegat|modulistic|certificaz|modulo|moduli|domanda|presentazione|istanza|dichiaraz|autocertificaz', text_lower):
                 return 'documentation'
             elif re.search(r'scadenz|termin|entro il|deadline', text_lower):
                 return 'deadlines'
@@ -218,7 +337,7 @@ class DocumentationAnalyzer:
         
         return None
     
-    def _select_most_informative_items(self, items: List[str], max_items: int = 10) -> List[str]:
+    def _select_most_informative_items(self, items: List[str], max_items: int = 15) -> List[str]:
         """
         Selects the most informative items from a list.
         
@@ -247,16 +366,27 @@ class DocumentationAnalyzer:
             
             # Score items with specific keywords higher
             keyword_score = 0
-            important_keywords = [
-                'document', 'allegat', 'modulistic', 'requisit',
-                'scadenz', 'termin', 'entro il', 'deadline',
+            
+            # Documentation-specific keywords get higher score
+            doc_keywords = [
+                'document', 'allegat', 'modulistic', 'certificaz', 'modulo', 'moduli',
+                'domanda', 'presentazione', 'istanza', 'dichiaraz', 'autocertificaz',
+                'documentazione', 'necessari', 'richiesta', 'obbligatori'
+            ]
+            
+            other_keywords = [
+                'requisit', 'scadenz', 'termin', 'entro il', 'deadline',
                 'beneficiari', 'destinatari', 'ammissibil',
                 'contribut', 'finanz', 'budget', 'fond', 'euro', '€',
                 'visura', 'camerale', 'bilanci', 'ula', 'dipendenti',
                 'brevetto', 'patent', 'concessione', 'identità', 'digitale'
             ]
             
-            for keyword in important_keywords:
+            for keyword in doc_keywords:
+                if keyword in item.lower():
+                    keyword_score += 2  # Higher score for documentation terms
+            
+            for keyword in other_keywords:
                 if keyword in item.lower():
                     keyword_score += 1
             
@@ -264,7 +394,7 @@ class DocumentationAnalyzer:
             if re.search(r'\d+', item):
                 keyword_score += 1
             
-            # Final score
+            # Final score with emphasis on documentation
             score = length_score + keyword_score
             scored_items.append((item, score))
         
@@ -274,13 +404,13 @@ class DocumentationAnalyzer:
     
     def generate_summary(self, grant_data: Dict[str, Any]) -> str:
         """
-        Generates a comprehensive, well-structured summary of the grant information.
+        Generates a comprehensive, well-structured summary of the grant documentation information.
         
         Args:
             grant_data (Dict[str, Any]): The merged grant data.
             
         Returns:
-            str: A formatted summary of the grant information.
+            str: A formatted summary of the grant documentation information.
         """
         if not grant_data:
             return "Nessuna documentazione necessaria specificata."
@@ -293,67 +423,52 @@ class DocumentationAnalyzer:
         else:
             summary_parts.append("# Documentazione Necessaria")
         
-        # Overview section - a brief introduction
-        if grant_data.get('overview'):
-            overview = truncate_text(grant_data['overview'], 500)
-            summary_parts.append(f"\n## Panoramica\n{overview}")
-        
-        # Required Documentation section
+        # Documentation section - this is our primary focus
         if grant_data.get('documentation'):
             summary_parts.append("\n## Documentazione Richiesta")
-            docs = self._select_most_informative_items(grant_data['documentation'])
+            docs = self._select_most_informative_items(grant_data['documentation'], 20)
             for doc in docs:
                 summary_parts.append(f"- {doc}")
+        else:
+            summary_parts.append("\n## Documentazione Richiesta")
+            summary_parts.append("- Informazioni specifiche sulla documentazione necessaria non trovate. Si consiglia di consultare il link del bando per dettagli.")
+        
+        # Brief overview - just a short context
+        if grant_data.get('overview'):
+            overview = truncate_text(grant_data['overview'], 300)  # Shorter overview to focus on documentation
+            summary_parts.append(f"\n## Contesto del Bando\n{overview}")
         
         # Requirements section
         if grant_data.get('requirements'):
             summary_parts.append("\n## Requisiti")
-            reqs = self._select_most_informative_items(grant_data['requirements'])
+            reqs = self._select_most_informative_items(grant_data['requirements'], 10)
             for req in reqs:
                 summary_parts.append(f"- {req}")
         
         # Eligibility section
         if grant_data.get('eligibility'):
             summary_parts.append("\n## Beneficiari Ammissibili")
-            eligs = self._select_most_informative_items(grant_data['eligibility'])
+            eligs = self._select_most_informative_items(grant_data['eligibility'], 8)
             for elig in eligs:
                 summary_parts.append(f"- {elig}")
         
-        # Funding section
-        if grant_data.get('funding'):
-            summary_parts.append("\n## Finanziamento")
-            funds = self._select_most_informative_items(grant_data['funding'])
-            for fund in funds:
-                summary_parts.append(f"- {fund}")
-        
-        # Deadlines section
+        # Deadlines section - important for documentation submission
         if grant_data.get('deadlines'):
-            summary_parts.append("\n## Scadenze")
-            deadlines = self._select_most_informative_items(grant_data['deadlines'])
+            summary_parts.append("\n## Scadenze per la Presentazione")
+            deadlines = self._select_most_informative_items(grant_data['deadlines'], 5)
             for deadline in deadlines:
                 summary_parts.append(f"- {deadline}")
         
-        # Important lists section
-        if grant_data.get('lists'):
-            for title, items in grant_data['lists'].items():
-                if len(items) > 1:  # Only include non-trivial lists
-                    summary_parts.append(f"\n## {title}")
-                    selected_items = self._select_most_informative_items(items, 5)
-                    for item in selected_items:
-                        summary_parts.append(f"- {item}")
+        # Funding section - included but less emphasized
+        if grant_data.get('funding'):
+            summary_parts.append("\n## Informazioni sul Finanziamento")
+            funds = self._select_most_informative_items(grant_data['funding'], 5) 
+            for fund in funds:
+                summary_parts.append(f"- {fund}")
         
-        # Other important sections
-        if grant_data.get('sections'):
-            for title, content in grant_data['sections'].items():
-                # Only include non-trivial sections with relevant keywords
-                if len(content) > 100 and any(keyword in (title + content).lower() for keyword in 
-                                             ['document', 'allegat', 'requisi', 'benefi', 'scad', 'finanz']):
-                    summary_parts.append(f"\n## {title}")
-                    summary_parts.append(truncate_text(content, 300))
-        
-        # Sources section
+        # Sources section - helpful for finding more documentation info
         if grant_data.get('pdf_sources'):
-            summary_parts.append("\n## Fonti PDF")
+            summary_parts.append("\n## Fonti di Documentazione")
             for pdf in grant_data['pdf_sources']:
                 filename = pdf.get('filename', 'PDF')
                 context = pdf.get('context', '')

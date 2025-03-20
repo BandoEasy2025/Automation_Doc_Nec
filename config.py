@@ -29,6 +29,17 @@ RETRY_BACKOFF = 2  # seconds
 PDF_DOWNLOAD_DIR = "downloads/pdfs"
 MAX_PDF_SIZE = 30 * 1024 * 1024  # 30 MB, increased for comprehensive PDFs
 
+# Documentation-specific search terms (expanded for better focus)
+DOCUMENTATION_TERMS = [
+    "documentazione", "necessaria", "richiesta", "obbligatoria", "presentare",
+    "allegati", "modulo", "moduli", "modulistica", "documenti",
+    "certificazioni", "visura", "camerale", "dichiarazione", "istanza",
+    "domanda", "presentazione", "compilare", "carta", "identità",
+    "autocertificazione", "firma", "digitale", "spid", "pec",
+    "bollo", "marca", "fattura", "fascicolo", "tessera", "codice fiscale",
+    "bilancio", "passaporto", "patente", "isee", "curriculum"
+]
+
 # Grant information search terms (in Italian)
 SEARCH_TERMS = [
     "bando", "contributo", "finanziamento", "sovvenzione", "agevolazione",
@@ -65,11 +76,17 @@ PDF_LINK_PATTERNS = [
     r'.*circolare.*\.pdf',
     r'.*istruzion.*\.pdf',
     r'.*guid.*\.pdf',
-    r'.*regolament.*\.pdf'
+    r'.*regolament.*\.pdf',
+    r'.*document.*\.pdf',
+    r'.*modul.*\.pdf',
+    r'.*dichiarazion.*\.pdf',
+    r'.*domanda.*\.pdf',
+    r'.*istanza.*\.pdf'
 ]
 
 # Important PDF types to prioritize
 PRIORITY_PDF_PATTERNS = [
     'bando', 'avviso', 'decreto', 'documenti', 'allegat', 'modulistic', 
-    'istruzion', 'guid', 'faq', 'regolament'
+    'istruzion', 'guid', 'faq', 'regolament', 'modulo', 'moduli',
+    'dichiarazione', 'domanda', 'presentazione', 'certificazione'
 ]
