@@ -1,7 +1,6 @@
 """
 Main entry point for the grant documentation crawler.
-Orchestrates the entire process of updating grant information in Supabase.
-Enhanced to search for specific documentation requirements and update the database with structured results.
+Orchestrates the entire process of finding specific documentation requirements in grants.
 """
 import logging
 import time
@@ -23,9 +22,8 @@ logger = logging.getLogger(__name__)
 
 def process_grant(grant: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Processes a single grant to extract and update its documentation.
+    Processes a single grant to find specific documentation requirements.
     Thoroughly analyzes all available information from websites and PDFs.
-    Searches for specific documentation requirements from the predefined list.
     
     Args:
         grant (Dict[str, Any]): The grant details from the database.
@@ -187,36 +185,24 @@ def process_grant(grant: Dict[str, Any]) -> Dict[str, Any]:
                 merged_data['errors'] = []
             merged_data['errors'].extend(error_messages)
         
-        # Generate comprehensive summary with specific documentation requirements checklist
-        documentation_summary = doc_analyzer.generate_summary(merged_data)
+        # Generate comprehensive list of found documentation items
+        documentation_list = doc_analyzer.generate_summary(merged_data)
         
         # Update the grant with the new documentation
-        grant['documentation_summary'] = documentation_summary
+        grant['documentation_summary'] = documentation_list
         
         logger.info(f"Completed processing for grant {grant_id}: {len(web_data)} webpage sources, {len(pdf_data)} PDF sources")
     except Exception as e:
         logger.error(f"Error analyzing grant {grant_id}: {str(e)}")
-        # Provide a basic documentation summary even in case of error
-        basic_summary = f"""# Documentazione Necessaria
+        # Provide a basic documentation message in case of error
+        basic_message = f"""# Documentazione Necessaria
 
-## Nota Importante
-Non è stato possibile estrarre automaticamente la documentazione completa per questo bando. 
+Non è stato possibile estrarre automaticamente la documentazione specifica per questo bando. 
 Si consiglia di consultare direttamente il bando ufficiale per i dettagli specifici.
-
-## Errori Riscontrati
-{'; '.join(error_messages)}
-
-## Documentazione Standard
-- Documento d'identità in corso di validità del rappresentante legale
-- Documentazione attestante i poteri di firma
-- Documentazione finanziaria dell'impresa (es. bilanci, dichiarazioni fiscali)
-- Descrizione dettagliata del progetto proposto
-- Piano finanziario del progetto
-- Dichiarazioni sostitutive richieste dal bando
 
 _Ultimo aggiornamento: {datetime.now().strftime("%d/%m/%Y %H:%M")}_
 """
-        grant['documentation_summary'] = basic_summary
+        grant['documentation_summary'] = basic_message
     
     return grant
 
@@ -292,20 +278,11 @@ def main():
                     processed_grants.append(processed_grant)
                 except Exception as e:
                     logger.error(f"Error processing grant {grant.get('id')}: {str(e)}")
-                    # Create a basic fallback summary for failed grants
+                    # Create a basic fallback message for failed grants
                     grant['documentation_summary'] = f"""# Documentazione Necessaria
 
-## Nota
 Non è stato possibile estrarre automaticamente la documentazione per questo bando a causa di errori tecnici.
 Si consiglia di consultare direttamente il bando ufficiale per i dettagli specifici.
-
-## Documentazione Standard
-- Documento d'identità in corso di validità del rappresentante legale
-- Documentazione attestante i poteri di firma
-- Documentazione finanziaria dell'impresa
-- Descrizione dettagliata del progetto proposto
-- Piano finanziario del progetto
-- Dichiarazioni sostitutive richieste dal bando
 
 _Ultimo aggiornamento: {datetime.now().strftime("%d/%m/%Y %H:%M")}_
 """

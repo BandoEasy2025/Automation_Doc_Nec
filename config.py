@@ -1,6 +1,6 @@
 """
 Configuration settings for the grant documentation crawler.
-Enhanced with specific documentation requirements checklist.
+Enhanced with specific documentation item keywords to search for.
 """
 import os
 from dotenv import load_dotenv
@@ -30,75 +30,75 @@ RETRY_BACKOFF = 2  # seconds
 PDF_DOWNLOAD_DIR = "downloads/pdfs"
 MAX_PDF_SIZE = 30 * 1024 * 1024  # 30 MB, increased for comprehensive PDFs
 
-# Specific documentation requirements to search for
-REQUIRED_DOCUMENTATION = [
-    {"name": "scheda progettuale", "keywords": ["scheda progett", "scheda del progett", "progett", "piano di sviluppo"]},
-    {"name": "piano finanziario delle entrate e delle spese", "keywords": ["piano finanziar", "budget", "entrate e spese", "piano delle spese", "previsione di spesa"]},
+# Specific documentation items to search for - these are the exact items we want to detect
+DOCUMENTATION_ITEMS = [
+    {"name": "scheda progettuale", "keywords": ["scheda progett", "scheda del progett", "scheda tecnica del progett"]},
+    {"name": "piano finanziario delle entrate e delle spese", "keywords": ["piano finanziar", "entrate e spese", "budget", "piano economico"]},
     {"name": "programma di investimento", "keywords": ["programma di invest", "piano di invest", "investiment"]},
-    {"name": "dichiarazione sul rispetto del DNSH", "keywords": ["DNSH", "Do No Significant Harm", "dichiarazione DNSH", "rispetto del DNSH"]},
-    {"name": "copia delle ultime due dichiarazioni dei redditi", "keywords": ["dichiarazion", "redditi", "dichiarazione dei redditi", "modello unico", "modello 730"]},
-    {"name": "dichiarazioni IVA", "keywords": ["IVA", "dichiarazione IVA", "dichiarazioni IVA", "imposta valore aggiunto"]},
-    {"name": "situazione economica e patrimoniale", "keywords": ["situazione economic", "situazione patrimonial", "stato patrimonial", "bilancio", "conto economic"]},
-    {"name": "conto economico previsionale", "keywords": ["conto economic", "economic prevision", "prevision", "bilancio prevision"]},
-    {"name": "documenti giustificativi di spesa", "keywords": ["giustificativ", "spesa", "document di spesa", "fattur", "quietanz"]},
-    {"name": "relazione dei lavori eseguiti", "keywords": ["relazione", "lavori eseguit", "relazione di esecuzione", "relazione tecnica"]},
-    {"name": "materiale promozionale", "keywords": ["material promozional", "promozion", "marketing", "pubblicit"]},
-    {"name": "informazioni su compagine sociale", "keywords": ["compagine social", "assetto societari", "soc", "struttura societaria"]},
-    {"name": "elenco delle agevolazioni pubbliche", "keywords": ["agevolazion", "contribut", "finanziam", "aiuti di stato", "de minimis"]},
-    {"name": "dichiarazione di inizio attività", "keywords": ["inizio attività", "DIA", "SCIA", "dichiarazione di inizio", "avvio attivit"]},
-    {"name": "progetto imprenditoriale", "keywords": ["progetto imprenditori", "business idea", "idea imprenditori", "proposta imprenditori"]},
-    {"name": "pitch", "keywords": ["pitch", "presentazione", "elevator pitch", "pitch deck"]},
-    {"name": "curriculum vitae", "keywords": ["curriculum", "CV", "curriculum vitae", "esperienza", "competenze"]},
-    {"name": "curriculum vitae team imprenditoriale", "keywords": ["curriculum team", "CV team", "team imprenditori", "soci", "fondatori"]},
-    {"name": "dichiarazione sulla localizzazione", "keywords": ["localizzazione", "ubicazione", "sede", "luogo", "dichiarazione localizzazione"]},
-    {"name": "atto di assenso del proprietario", "keywords": ["assenso", "propriet", "autorizzazione propriet", "consenso propriet"]},
-    {"name": "contratto di locazione", "keywords": ["locazion", "affitto", "contratto di locazione", "contratto d'affitto"]},
+    {"name": "dichiarazione sul rispetto del DNSH", "keywords": ["DNSH", "Do No Significant Harm", "dichiarazione DNSH"]},
+    {"name": "dichiarazioni dei redditi", "keywords": ["dichiarazion dei redditi", "modello redditi", "dichiarazione fiscale"]},
+    {"name": "dichiarazioni IVA", "keywords": ["dichiarazion IVA", "IVA", "imposta sul valore aggiunto"]},
+    {"name": "situazione economica e patrimoniale", "keywords": ["situazione economic", "situazione patrimonial", "stato patrimonial"]},
+    {"name": "conto economico previsionale", "keywords": ["conto economic", "previsional", "bilancio prevision"]},
+    {"name": "documenti giustificativi di spesa", "keywords": ["giustificativ", "document di spesa", "fattur"]},
+    {"name": "relazione dei lavori eseguiti", "keywords": ["relazione", "lavori eseguit", "relazione tecnica"]},
+    {"name": "materiale promozionale", "keywords": ["material promozional", "promozion", "marketing"]},
+    {"name": "informazioni su compagine sociale", "keywords": ["compagine social", "assetto societari", "soci"]},
+    {"name": "elenco delle agevolazioni pubbliche", "keywords": ["agevolazion", "contribut", "de minimis"]},
+    {"name": "dichiarazione di inizio attività", "keywords": ["inizio attività", "DIA", "SCIA"]},
+    {"name": "progetto imprenditoriale", "keywords": ["progetto imprenditori", "business idea", "idea imprenditori"]},
+    {"name": "pitch", "keywords": ["pitch", "presentazione", "elevator pitch"]},
+    {"name": "curriculum vitae", "keywords": ["curriculum", "CV", "curriculum vitae"]},
+    {"name": "curriculum vitae team imprenditoriale", "keywords": ["curriculum team", "CV team", "team imprenditori"]},
+    {"name": "dichiarazione sulla localizzazione", "keywords": ["localizzazione", "ubicazione", "sede"]},
+    {"name": "atto di assenso del proprietario", "keywords": ["assenso", "propriet", "autorizzazione propriet"]},
+    {"name": "contratto di locazione", "keywords": ["locazion", "affitto", "contratto di locazione"]},
     {"name": "contratto di comodato", "keywords": ["comodato", "comodato d'uso", "contratto di comodato"]},
-    {"name": "certificazione qualità", "keywords": ["certificazione qualit", "ISO", "certificato di qualit", "sistema qualit"]},
-    {"name": "fatture elettroniche", "keywords": ["fattur", "fattura elettronic", "fatturazione elettronic", "e-fattura"]},
-    {"name": "quietanze originali", "keywords": ["quietanz", "ricevut", "pagament", "bonifico", "pagamento effettuato"]},
-    {"name": "Business plan", "keywords": ["business plan", "piano di business", "piano aziendale", "piano d'impresa"]},
-    {"name": "dichiarazione sostitutiva", "keywords": ["dichiarazione sostitutiva", "autocertificazione", "DPR 445", "445/2000"]},
-    {"name": "copia dei pagamenti effettuati", "keywords": ["pagament", "bonifico", "estratto conto", "ricevuta di pagamento"]},
-    {"name": "dichiarazione di fine corso", "keywords": ["fine corso", "completamento corso", "attestazione finale", "conclusione corso"]},
-    {"name": "attestato di frequenza", "keywords": ["attestato", "frequenza", "partecipazione", "certificato di frequenza"]},
-    {"name": "report di self-assessment SUSTAINability", "keywords": ["self-assessment", "sustainability", "sostenibilit", "valutazione sostenibilit"]},
-    {"name": "relazione finale di progetto", "keywords": ["relazione final", "report final", "conclusione progett", "progetto concluso"]},
-    {"name": "Atto di conferimento", "keywords": ["conferimento", "atto di conferimento", "conferimento incarico", "mandato"]},
-    {"name": "investitore esterno", "keywords": ["investitor", "finanziator", "business angel", "venture capital", "investimento esterno"]},
-    {"name": "Delega del Legale rappresentante", "keywords": ["delega", "legale rappresentante", "rappresentanza", "procura"]},
-    {"name": "Budget dei costi", "keywords": ["budget", "costi", "preventivo", "piano dei costi", "previsione costi"]},
-    {"name": "Certificato di attribuzione del codice fiscale", "keywords": ["codice fiscale", "certificato attribuzione", "attribuzione codice", "agenzia entrate"]},
-    {"name": "Analisi delle entrate", "keywords": ["analisi entrate", "entrate", "ricavi", "introiti", "analisi ricavi"]},
-    {"name": "DURC", "keywords": ["DURC", "regolarità contributiva", "documento unico", "contributi"]},
-    {"name": "Dichiarazione antiriciclaggio", "keywords": ["antiriciclaggio", "riciclaggio", "AML", "D.lgs 231"]},
-    {"name": "Dichiarazioni antimafia", "keywords": ["antimafia", "certificazione antimafia", "informativa antimafia", "D.lgs 159"]},
-    {"name": "fideiussione", "keywords": ["fideiussion", "garanzia", "polizza fideiussoria", "garanzia bancaria"]},
-    {"name": "Casellario Giudiziale", "keywords": ["casellario", "giudiziale", "certificato penale", "carichi pendenti"]},
+    {"name": "certificazione qualità", "keywords": ["certificazione qualit", "ISO", "certificato di qualit"]},
+    {"name": "fatture elettroniche", "keywords": ["fattur elettronic", "e-fattura", "fatturazione elettronic"]},
+    {"name": "quietanze originali", "keywords": ["quietanz", "ricevut", "pagament"]},
+    {"name": "Business plan", "keywords": ["business plan", "piano di business", "piano aziendale"]},
+    {"name": "dichiarazione sostitutiva dell'atto di notorietà", "keywords": ["dichiarazione sostitutiva", "atto di notorietà", "DPR 445"]},
+    {"name": "copia dei pagamenti effettuati", "keywords": ["pagament", "bonifico", "estratto conto"]},
+    {"name": "dichiarazione di fine corso", "keywords": ["fine corso", "completamento corso", "attestazione finale"]},
+    {"name": "attestato di frequenza", "keywords": ["attestato", "frequenza", "partecipazione"]},
+    {"name": "report di self-assessment SUSTAINability", "keywords": ["self-assessment", "sustainability", "sostenibilit"]},
+    {"name": "relazione finale di progetto", "keywords": ["relazione final", "report final", "conclusione progett"]},
+    {"name": "Atto di conferimento", "keywords": ["conferimento", "atto di conferimento", "conferimento incarico"]},
+    {"name": "investitore esterno", "keywords": ["investitor", "finanziator", "business angel"]},
+    {"name": "Delega del Legale rappresentante", "keywords": ["delega", "legale rappresentante", "rappresentanza"]},
+    {"name": "Budget dei costi", "keywords": ["budget", "costi", "preventivo"]},
+    {"name": "Certificato di attribuzione del codice fiscale", "keywords": ["codice fiscale", "certificato attribuzione", "attribuzione codice"]},
+    {"name": "Analisi delle entrate", "keywords": ["analisi entrate", "entrate", "ricavi"]},
+    {"name": "DURC", "keywords": ["DURC", "regolarità contributiva", "documento unico"]},
+    {"name": "Dichiarazione antiriciclaggio", "keywords": ["antiriciclaggio", "riciclaggio", "AML"]},
+    {"name": "Dichiarazioni antimafia", "keywords": ["antimafia", "certificazione antimafia", "informativa antimafia"]},
+    {"name": "fideiussione", "keywords": ["fideiussion", "garanzia", "polizza fideiussoria"]},
+    {"name": "Casellario Giudiziale", "keywords": ["casellario", "giudiziale", "certificato penale"]},
     {"name": "Fideiussione Provvisoria", "keywords": ["fideiussione provvisoria", "garanzia provvisoria", "cauzione provvisoria"]},
     {"name": "contributo ANAC", "keywords": ["ANAC", "autorità anticorruzione", "contributo gara"]},
-    {"name": "DICHIARAZIONE D'INTENTI", "keywords": ["intenti", "dichiarazione d'intenti", "lettera d'intenti", "manifestazione interesse"]},
-    {"name": "DICHIARAZIONE INTESTAZIONE FIDUCIARIA", "keywords": ["intestazione fiduciaria", "fiduciari", "trustee", "fiduciante"]},
-    {"name": "certificato di regolarità fiscale", "keywords": ["regolarità fiscal", "agenzia entrate", "debiti fiscali", "imposte"]},
-    {"name": "certificato di iscrizione al registro delle imprese", "keywords": ["registro imprese", "iscrizione camera", "CCIAA", "camera di commercio"]},
-    {"name": "piano di sicurezza", "keywords": ["sicurezza", "piano di sicurezza", "PSC", "coordinamento sicurezza"]},
-    {"name": "certificato di conformità", "keywords": ["conformità", "certificato conformità", "dichiarazione conformità", "attestazione conformità"]},
-    {"name": "Attestazione del professionista", "keywords": ["attestazione professionist", "perizia", "relazione professionist", "relazione tecnica"]},
-    {"name": "GANTT del progetto", "keywords": ["gantt", "cronoprogramma", "tempistiche", "pianificazione temporale"]},
-    {"name": "atto di nomina", "keywords": ["nomina", "atto di nomina", "designazione", "incarico"]},
-    {"name": "visura catastale", "keywords": ["visura catast", "catasto", "dati catastali", "estratto catastale"]},
-    {"name": "DSAN", "keywords": ["DSAN", "dichiarazione sostitutiva atto notorietà", "atto notorio", "dichiarazione sostitutiva"]},
-    {"name": "certificato di attribuzione di partita IVA", "keywords": ["partita IVA", "P.IVA", "attribuzione IVA", "certificato IVA"]},
-    {"name": "brevetto", "keywords": ["brevett", "patent", "proprietà intellettuale", "invenzione"]},
-    {"name": "licenza brevettuale", "keywords": ["licenza brevett", "licenza patent", "uso brevetto", "sfruttamento brevetto"]},
-    {"name": "attestato di certificazione del libretto", "keywords": ["libretto", "libretto di certificazione", "libretto formativo", "attestato libretto"]},
-    {"name": "visura camerale", "keywords": ["visura", "visura camerale", "camera di commercio", "registro imprese"]},
-    {"name": "carta d'identità", "keywords": ["carta d'identità", "documento identità", "carta identità", "ID"]},
-    {"name": "codice fiscale", "keywords": ["codice fiscale", "CF", "tessera sanitaria", "codice contribuente"]},
-    {"name": "certificato Soa", "keywords": ["SOA", "attestazione SOA", "qualificazione", "certificato SOA"]}
+    {"name": "DICHIARAZIONE D'INTENTI", "keywords": ["intenti", "dichiarazione d'intenti", "lettera d'intenti"]},
+    {"name": "DICHIARAZIONE INTESTAZIONE FIDUCIARIA", "keywords": ["intestazione fiduciaria", "fiduciari", "trustee"]},
+    {"name": "certificato di regolarità fiscale", "keywords": ["regolarità fiscal", "agenzia entrate", "debiti fiscali"]},
+    {"name": "certificato di iscrizione al registro delle imprese", "keywords": ["registro imprese", "iscrizione camera", "CCIAA"]},
+    {"name": "piano di sicurezza e coordinamento", "keywords": ["sicurezza", "piano di sicurezza", "PSC"]},
+    {"name": "certificato di conformità", "keywords": ["conformità", "certificato conformità", "dichiarazione conformità"]},
+    {"name": "Attestazione del professionista", "keywords": ["attestazione professionist", "perizia", "relazione professionist"]},
+    {"name": "GANTT del progetto", "keywords": ["gantt", "cronoprogramma", "tempistiche"]},
+    {"name": "atto di nomina", "keywords": ["nomina", "atto di nomina", "designazione"]},
+    {"name": "visura catastale", "keywords": ["visura catast", "catasto", "dati catastali"]},
+    {"name": "DSAN", "keywords": ["DSAN", "dichiarazione sostitutiva atto notorietà", "atto notorio"]},
+    {"name": "certificato di attribuzione di partita IVA", "keywords": ["partita IVA", "P.IVA", "attribuzione IVA"]},
+    {"name": "brevetto", "keywords": ["brevett", "patent", "proprietà intellettuale"]},
+    {"name": "licenza brevettuale", "keywords": ["licenza brevett", "licenza patent", "uso brevetto"]},
+    {"name": "attestato di certificazione del libretto", "keywords": ["libretto", "libretto di certificazione", "libretto formativo"]},
+    {"name": "visura camerale", "keywords": ["visura", "visura camerale", "camera di commercio"]},
+    {"name": "carta d'identità", "keywords": ["carta d'identità", "documento identità", "carta identità"]},
+    {"name": "codice fiscale dei soci", "keywords": ["codice fiscale", "CF", "tessera sanitaria"]},
+    {"name": "certificato Soa", "keywords": ["SOA", "attestazione SOA", "qualificazione"]}
 ]
 
-# Grant information search terms (in Italian) - enhanced with documentation focus
+# Grant information search terms (in Italian)
 SEARCH_TERMS = [
     # Documentation terms
     "documentazione", "documenti", "allegati", "modulistica", "certificazioni",
@@ -113,13 +113,10 @@ SEARCH_TERMS = [
     "fondo", "misura", "intervento", "programma", "progetto",
     "spese", "costi", "ammissibili", "finanziabili", "contributo",
     "istruttoria", "valutazione", "punteggio", "criteri", "graduatoria",
-    "erogazione", "rendicontazione", "liquidazione", "saldo", "anticipo",
-    "visura", "camerale", "bilanci", "ula", "dipendenti",
-    "brevetto", "patent", "concessione", "titolo", "invention",
-    "servizi", "specialistici", "preventivi", "quotation", "valorizzazione"
+    "erogazione", "rendicontazione", "liquidazione", "saldo", "anticipo"
 ]
 
-# Important sections to look for - enhanced for documentation focus
+# Important sections to look for
 IMPORTANT_SECTIONS = [
     # Documentation-specific sections
     "documentazione", "documenti", "allegati", "modulistica", 

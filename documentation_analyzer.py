@@ -1,6 +1,6 @@
 """
 Analyzes and summarizes grant information extracted from websites and PDFs.
-Enhanced to detect specific documentation requirements from a predefined list.
+Focuses on finding specific documentation requirements from a predefined list.
 """
 import logging
 import re
@@ -16,7 +16,7 @@ from utils import clean_text, truncate_text
 logger = logging.getLogger(__name__)
 
 class DocumentationAnalyzer:
-    """Analyzes and summarizes extracted grant information."""
+    """Analyzes and summarizes extracted grant information with focus on required documentation."""
     
     def __init__(self):
         """Initialize the documentation analyzer."""
@@ -35,7 +35,7 @@ class DocumentationAnalyzer:
             'modulo', 'form', 'attestazione', 'certification'
         ]
         
-        logger.info("Documentation analyzer initialized with enhanced keyword matching")
+        logger.info("Documentation analyzer initialized with focus on specific document requirements")
     
     def merge_grant_data(self, web_data: List[Dict[str, Any]], pdf_data: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
@@ -235,29 +235,12 @@ class DocumentationAnalyzer:
         for category in ['requirements', 'documentation', 'deadlines', 'eligibility', 'funding']:
             if merged_data[category]:
                 merged_data[category] = list(dict.fromkeys(merged_data[category]))
-            
-        # Ensure we have something in documentation category
-        if not merged_data['documentation'] and merged_data['requirements']:
-            # If we have requirements but no documentation, use requirements
-            merged_data['documentation'] = merged_data['requirements'].copy()
-        
-        # Last resort: if still no documentation, extract from overview
-        if not merged_data['documentation'] and merged_data['overview']:
-            self._extract_documentation_from_text(merged_data['overview'], merged_data)
-            
-        # Absolute last resort: add fallback message
-        if not merged_data['documentation']:
-            merged_data['documentation'] = [
-                "Per presentare la domanda è necessaria la documentazione indicata nel bando ufficiale.",
-                "Si consiglia di verificare i requisiti di ammissibilità e i documenti richiesti sul sito ufficiale.",
-                "La documentazione tipicamente richiesta include: identità del richiedente, descrizione del progetto, piano finanziario, e altri documenti specifici indicati nel bando."
-            ]
         
         return merged_data
     
     def _extract_documentation_from_text(self, text: str, merged_data: Dict[str, Any]) -> None:
         """
-        Aggressively searches for documentation requirements in text.
+        Searches for documentation requirements in text.
         
         Args:
             text (str): The text to analyze.
@@ -332,21 +315,22 @@ class DocumentationAnalyzer:
         
         return None
     
-    def check_required_documentation(self, text: str) -> Dict[str, Dict[str, Any]]:
+    def find_required_documentation(self, text: str) -> List[Dict[str, Any]]:
         """
-        Check the text for specific documentation requirements from the predefined list.
+        Finds specific documentation items from the predefined list in the text.
+        Only returns items that are actually found.
         
         Args:
             text (str): The text to analyze.
             
         Returns:
-            Dict[str, Dict[str, Any]]: Dictionary of required documentation items with their status.
+            List[Dict[str, Any]]: List of found documentation items with context.
         """
         text_lower = text.lower()
-        results = {}
+        found_items = []
         
-        # Process each required documentation item
-        for doc_item in config.REQUIRED_DOCUMENTATION:
+        # Process each documentation item
+        for doc_item in config.DOCUMENTATION_ITEMS:
             item_name = doc_item["name"]
             keywords = doc_item["keywords"]
             
@@ -366,162 +350,64 @@ class DocumentationAnalyzer:
                             if clean_sentence and len(clean_sentence) > 10 and clean_sentence not in matching_contexts:
                                 matching_contexts.append(clean_sentence)
             
-            # Record the result
-            results[item_name] = {
-                "required": len(keyword_matches) > 0,
-                "matching_keywords": keyword_matches,
-                "context": matching_contexts[:3]  # Limit to 3 most relevant contexts
-            }
+            # If we found matches, add this item to the results
+            if keyword_matches and matching_contexts:
+                found_items.append({
+                    "name": item_name,
+                    "matching_keywords": keyword_matches,
+                    "context": matching_contexts[:3]  # Limit to 3 most relevant contexts
+                })
         
-        return results
+        return found_items
     
-    def _select_most_informative_items(self, items: List[str], max_items: int = 15) -> List[str]:
+    def generate_documentation_list(self, found_docs: List[Dict[str, Any]]) -> str:
         """
-        Selects the most informative items from a list.
+        Generates a structured list of found documentation requirements.
         
         Args:
-            items (List[str]): List of text items.
-            max_items (int): Maximum number of items to return.
+            found_docs (List[Dict[str, Any]]): List of found documentation items.
             
         Returns:
-            List[str]: List of most informative items.
+            str: A formatted list of found documentation requirements.
         """
-        if not items:
-            return []
+        if not found_docs:
+            return "Non sono stati trovati riferimenti specifici a documentazione richiesta. Si consiglia di consultare il testo completo del bando."
+        
+        # Create the documentation list
+        doc_parts = []
+        
+        # Header
+        doc_parts.append("# Documentazione Necessaria")
+        
+        # Add each found documentation item with context
+        for item in found_docs:
+            doc_parts.append(f"## {item['name'].capitalize()}")
             
-        if len(items) <= max_items:
-            return items
+            # Add context if available
+            if item["context"]:
+                doc_parts.append("**Riferimenti nel bando:**")
+                for context in item["context"]:
+                    doc_parts.append(f"- {context}")
+                doc_parts.append("")
         
-        # Score items based on information density
-        scored_items = []
-        for item in items:
-            # Skip very short items
-            if len(item) < 15:
-                continue
-                
-            # Score longer items higher
-            length_score = min(5, len(item) / 50)
-            
-            # Score items with specific keywords higher
-            keyword_score = 0
-            important_keywords = [
-                'document', 'allegat', 'modulistic', 'requisit',
-                'scadenz', 'termin', 'entro il', 'deadline',
-                'beneficiari', 'destinatari', 'ammissibil',
-                'contribut', 'finanz', 'budget', 'fond', 'euro', '€',
-                'visura', 'camerale', 'bilanci', 'ula', 'dipendenti',
-                'brevetto', 'patent', 'concessione', 'identità', 'digitale'
-            ]
-            
-            for keyword in important_keywords:
-                if keyword in item.lower():
-                    keyword_score += 1
-            
-            # Score items with numbers and dates higher
-            if re.search(r'\d+', item):
-                keyword_score += 1
-            
-            # Final score
-            score = length_score + keyword_score
-            scored_items.append((item, score))
+        # Add timestamp
+        timestamp = datetime.now().strftime("%d/%m/%Y %H:%M")
+        doc_parts.append(f"\n_Ultimo aggiornamento: {timestamp}_")
         
-        # Sort by score (highest first) and take top items
-        sorted_items = sorted(scored_items, key=lambda x: x[1], reverse=True)
-        return [item[0] for item in sorted_items[:max_items]]
-    
-    def generate_documentation_checklist(self, required_docs: Dict[str, Dict[str, Any]]) -> str:
-        """
-        Generates a structured checklist of required documentation.
-        
-        Args:
-            required_docs (Dict[str, Dict[str, Any]]): Dictionary of required documentation items.
-            
-        Returns:
-            str: A formatted checklist of required documentation.
-        """
-        # Group documents by requirement status
-        required_items = []
-        possibly_required_items = []
-        not_found_items = []
-        
-        for doc_name, doc_info in required_docs.items():
-            if doc_info["required"]:
-                # If there's context, it's definitely required
-                if doc_info["context"]:
-                    required_items.append((doc_name, doc_info))
-                else:
-                    # If keywords matched but no context, it's possibly required
-                    possibly_required_items.append((doc_name, doc_info))
-            else:
-                not_found_items.append(doc_name)
-        
-        # Create the checklist
-        checklist_parts = []
-        
-        # Add required items
-        if required_items:
-            checklist_parts.append("## Documentazione Obbligatoria")
-            for doc_name, doc_info in required_items:
-                checklist_parts.append(f"### {doc_name}")
-                
-                # Add context if available
-                if doc_info["context"]:
-                    checklist_parts.append("**Riferimenti nel bando:**")
-                    for context in doc_info["context"]:
-                        checklist_parts.append(f"- {context}")
-                    checklist_parts.append("")
-        
-        # Add possibly required items
-        if possibly_required_items:
-            checklist_parts.append("## Documentazione Potenzialmente Richiesta")
-            checklist_parts.append("*Si consiglia di verificare nel bando se i seguenti documenti sono necessari:*")
-            
-            for doc_name, doc_info in possibly_required_items:
-                checklist_parts.append(f"- {doc_name}")
-            
-            checklist_parts.append("")
-        
-        # Add not found items
-        if not_found_items:
-            checklist_parts.append("## Documentazione Non Esplicitamente Menzionata")
-            checklist_parts.append("*I seguenti documenti non sono stati esplicitamente menzionati nel bando:*")
-            
-            for doc_name in not_found_items:
-                checklist_parts.append(f"- {doc_name}")
-        
-        # Final note
-        checklist_parts.append("\n## Nota Importante")
-        checklist_parts.append("Si consiglia di verificare sempre il testo completo del bando per la lista definitiva della documentazione richiesta.")
-        
-        return "\n".join(checklist_parts)
+        return "\n".join(doc_parts)
     
     def generate_summary(self, grant_data: Dict[str, Any]) -> str:
         """
-        Generates a comprehensive, well-structured summary of the grant documentation requirements.
+        Generates a summary of the required documentation found in the grant.
         
         Args:
             grant_data (Dict[str, Any]): The merged grant data.
             
         Returns:
-            str: A formatted summary of the required documentation with detailed checklist.
+            str: A formatted summary of the found documentation requirements.
         """
         if not grant_data:
-            # If we have no data at all, return a detailed fallback message
-            return """# Documentazione Necessaria per il Bando
-            
-## Documentazione Standard
-- Documento d'identità in corso di validità del rappresentante legale
-- Documentazione attestante i poteri di firma
-- Documentazione finanziaria dell'impresa (es. bilanci, dichiarazioni fiscali)
-- Descrizione dettagliata del progetto proposto
-- Piano finanziario del progetto
-- Dichiarazioni sostitutive richieste dal bando
-
-## Nota
-Per la documentazione specifica, si consiglia di consultare il testo integrale del bando.
-
-_Ultimo aggiornamento: {data}_
-""".format(data=datetime.now().strftime("%d/%m/%Y %H:%M"))
+            return "Non sono stati trovati riferimenti specifici a documentazione richiesta."
         
         # Get the raw text from the grant data for keyword searching
         raw_text = grant_data.get('raw_text', '')
@@ -546,48 +432,8 @@ _Ultimo aggiornamento: {data}_
                 
             raw_text = ' '.join(text_parts)
         
-        # Check for required documentation
-        required_docs = self.check_required_documentation(raw_text)
+        # Find required documentation items
+        found_docs = self.find_required_documentation(raw_text)
         
-        # Generate the documentation checklist
-        documentation_checklist = self.generate_documentation_checklist(required_docs)
-        
-        summary_parts = []
-        
-        # Title
-        if grant_data.get('title'):
-            summary_parts.append(f"# Documentazione Necessaria: {grant_data['title']}")
-        else:
-            summary_parts.append("# Documentazione Necessaria")
-        
-        # Brief overview
-        if grant_data.get('overview'):
-            overview = truncate_text(grant_data['overview'], 300)
-            summary_parts.append(f"\n## Panoramica del Bando\n{overview}")
-        
-        # Add the documentation checklist
-        summary_parts.append("\n" + documentation_checklist)
-        
-        # Additional general documentation information from the text
-        if grant_data.get('documentation'):
-            summary_parts.append("\n## Informazioni Aggiuntive sulla Documentazione")
-            docs = self._select_most_informative_items(grant_data['documentation'], 10)
-            for doc in docs:
-                summary_parts.append(f"- {doc}")
-        
-        # Add PDF sources that might contain documentation details
-        if grant_data.get('pdf_sources'):
-            summary_parts.append("\n## Fonti PDF per Documentazione")
-            for pdf in grant_data['pdf_sources'][:5]:  # Limit to 5 most relevant sources
-                filename = pdf.get('filename', 'PDF')
-                context = pdf.get('context', '')
-                if context:
-                    summary_parts.append(f"- {context} [{filename}]")
-                else:
-                    summary_parts.append(f"- {filename}")
-        
-        # Add a timestamp to indicate when the documentation was last updated
-        timestamp = datetime.now().strftime("%d/%m/%Y %H:%M")
-        summary_parts.append(f"\n\n_Ultimo aggiornamento: {timestamp}_")
-        
-        return "\n".join(summary_parts)
+        # Generate the documentation list
+        return self.generate_documentation_list(found_docs)
