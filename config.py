@@ -1,6 +1,8 @@
 """
 Configuration settings for the grant documentation crawler.
+Enhanced with more documentation-specific patterns.
 """
+# 11:51
 import os
 from dotenv import load_dotenv
 
@@ -29,23 +31,18 @@ RETRY_BACKOFF = 2  # seconds
 PDF_DOWNLOAD_DIR = "downloads/pdfs"
 MAX_PDF_SIZE = 30 * 1024 * 1024  # 30 MB, increased for comprehensive PDFs
 
-# Documentation-specific search terms (expanded for better focus)
-DOCUMENTATION_TERMS = [
-    "documentazione", "necessaria", "richiesta", "obbligatoria", "presentare",
-    "allegati", "modulo", "moduli", "modulistica", "documenti",
-    "certificazioni", "visura", "camerale", "dichiarazione", "istanza",
-    "domanda", "presentazione", "compilare", "carta", "identità",
-    "autocertificazione", "firma", "digitale", "spid", "pec",
-    "bollo", "marca", "fattura", "fascicolo", "tessera", "codice fiscale",
-    "bilancio", "passaporto", "patente", "isee", "curriculum"
-]
-
-# Grant information search terms (in Italian)
+# Grant information search terms (in Italian) - enhanced with documentation focus
 SEARCH_TERMS = [
+    # Documentation terms
+    "documentazione", "documenti", "allegati", "modulistica", "certificazioni",
+    "domanda", "application", "modulo", "form", "istanza",
+    "presentazione", "dichiarazione", "attestazione", "certification",
+    "firma", "signature", "digitale", "identità", "identity",
+    
+    # General grant terms
     "bando", "contributo", "finanziamento", "sovvenzione", "agevolazione",
     "scadenza", "deadline", "termine", "presentazione", "domanda",
     "beneficiari", "destinatari", "requisiti", "ammissibilità", "eligibilità",
-    "documentazione", "allegati", "modulistica", "documenti", "certificazioni",
     "fondo", "misura", "intervento", "programma", "progetto",
     "spese", "costi", "ammissibili", "finanziabili", "contributo",
     "istruttoria", "valutazione", "punteggio", "criteri", "graduatoria",
@@ -55,13 +52,33 @@ SEARCH_TERMS = [
     "servizi", "specialistici", "preventivi", "quotation", "valorizzazione"
 ]
 
-# Important sections to look for
+# Important sections to look for - enhanced for documentation focus
 IMPORTANT_SECTIONS = [
+    # Documentation-specific sections
+    "documentazione", "documenti", "allegati", "modulistica", 
+    "come presentare", "presentazione domanda", "procedura",
+    "documenti necessari", "certificazioni", "dichiarazioni",
+    "domanda di partecipazione", "application form",
+    
+    # General grant sections
     "oggetto", "finalità", "obiettivi", "beneficiari", "destinatari",
-    "requisiti", "documentazione", "allegati", "modalità", "presentazione",
+    "requisiti", "allegati", "modalità", "presentazione",
     "scadenza", "termine", "dotazione", "finanziaria", "contributo",
     "agevolazione", "spese", "ammissibili", "istruttoria", "valutazione",
     "erogazione", "rendicontazione", "contatti", "informazioni", "faq"
+]
+
+# Documentation-specific patterns
+DOCUMENTATION_PATTERNS = [
+    r'document[azio\-\s]+necessari[ao]',
+    r'allegat[io][\s]+(?:richiest[io]|necessari[io])',
+    r'documentazione[\s]+da[\s]+(?:presentare|allegare)',
+    r'documenti[\s]+(?:da[\s]+)?(?:presentare|allegare)',
+    r'(?:modalit[aà]|procedura)[\s]+(?:di[\s]+)?presentazione',
+    r'(?:domanda|istanza)[\s]+di[\s]+partecipazione',
+    r'modulistic[ao]',
+    r'certificazion[ei][\s]+(?:necessari[ae]|richiest[ae])',
+    r'prerequisiti[\s]+documentali'
 ]
 
 # PDF link patterns
@@ -77,16 +94,28 @@ PDF_LINK_PATTERNS = [
     r'.*istruzion.*\.pdf',
     r'.*guid.*\.pdf',
     r'.*regolament.*\.pdf',
-    r'.*document.*\.pdf',
-    r'.*modul.*\.pdf',
-    r'.*dichiarazion.*\.pdf',
+    r'.*dichiaraz.*\.pdf',
     r'.*domanda.*\.pdf',
-    r'.*istanza.*\.pdf'
+    r'.*istanza.*\.pdf',
+    r'.*application.*\.pdf',
+    r'.*form.*\.pdf'
 ]
 
 # Important PDF types to prioritize
 PRIORITY_PDF_PATTERNS = [
     'bando', 'avviso', 'decreto', 'documenti', 'allegat', 'modulistic', 
-    'istruzion', 'guid', 'faq', 'regolament', 'modulo', 'moduli',
-    'dichiarazione', 'domanda', 'presentazione', 'certificazione'
+    'istruzion', 'guid', 'faq', 'regolament', 'domanda', 'application',
+    'dichiaraz', 'attestaz', 'form', 'modul', 'certific'
+]
+
+# Documentation keywords (specific focus for extracting documentation requirements)
+DOCUMENTATION_KEYWORDS = [
+    'document', 'allegat', 'modulistic', 'certificaz', 
+    'richiest', 'presentare', 'obbligo', 'necessari',
+    'domanda', 'application', 'richiesta', 'presentazione',
+    'firma', 'signature', 'digitale', 'copia', 'identity',
+    'identità', 'dichiarazione', 'declaration', 'formulario',
+    'modulo', 'form', 'attestazione', 'certification',
+    'visura', 'camerale', 'obbligatori', 'facsimile',
+    'istruzioni', 'formato', 'pdf', 'modello', 'template'
 ]

@@ -1,6 +1,9 @@
 """
 Handles downloading and processing PDF files to extract relevant text.
+Enhanced to better identify documentation requirements.
 """
+#updated 11:51
+
 import logging
 import os
 import re
@@ -26,6 +29,29 @@ class PDFProcessor:
         
         # Create download directory if it doesn't exist
         os.makedirs(config.PDF_DOWNLOAD_DIR, exist_ok=True)
+        
+        # Documentation-specific patterns for more targeted extraction
+        self.doc_keywords = [
+            'document', 'allegat', 'modulistic', 'certificaz', 
+            'richiest', 'presentare', 'obbligo', 'necessari',
+            'domanda', 'application', 'richiesta', 'presentazione',
+            'firma', 'signature', 'digitale', 'copia', 'identity',
+            'identità', 'dichiarazione', 'declaration', 'formulario',
+            'modulo', 'form', 'attestazione', 'certification'
+        ]
+        
+        # Specific section title patterns to look for in PDFs
+        self.doc_section_patterns = [
+            r'document[azio\-\s]+necessari[ao]',
+            r'allegat[io][\s]+(?:richiest[io]|necessari[io])',
+            r'documentazione[\s]+da[\s]+(?:presentare|allegare)',
+            r'documenti[\s]+(?:da[\s]+)?(?:presentare|allegare)',
+            r'(?:modalit[aà]|procedura)[\s]+(?:di[\s]+)?presentazione',
+            r'(?:domanda|istanza)[\s]+di[\s]+partecipazione',
+            r'modulistic[ao]',
+            r'certificazion[ei][\s]+(?:necessari[ae]|richiest[ae])',
+            r'prerequisiti[\s]+documentali'
+        ]
     
     @retry(
         stop=stop_after_attempt(config.MAX_RETRIES),
@@ -110,6 +136,7 @@ class PDFProcessor:
     def process_pdf_content(self, pdf_text: str, context: str = "") -> Dict[str, Any]:
         """
         Processes PDF text to extract structured information.
+        Enhanced to better identify documentation requirements.
         
         Args:
             pdf_text (str): The text content of the PDF.
@@ -128,6 +155,9 @@ class PDFProcessor:
             'lists': [],
             'tables': []
         }
+        
+        # Extract documentation-specific content first
+        self._extract_documentation_content(pdf_text, result)
         
         # Extract sections based on heading patterns
         section_pattern = re.compile(r'(?:\n|\r\n)([A-Z][A-Za-z0-9\s\-,]+)[\.\:]?(?:\n|\r\n)')
@@ -200,6 +230,110 @@ class PDFProcessor:
         
         return result
     
+    def _extract_documentation_content(self, pdf_text: str, result: Dict[str, Any]) -> None:
+        """
+        Specifically extracts documentation requirements from PDF text.
+        
+        Args:
+            pdf_text (str): The PDF text content to analyze.
+            result (Dict[str, Any]): The result dictionary to update.
+        """
+        # Initialize documentation collections if not present
+        if "Documentazione" not in result:
+            result["Documentazione"] = []
+        
+        # Try to find documentation sections
+        for pattern in self.doc_section_patterns:
+            # Create a regex pattern that looks for headers
+            header_pattern = re.compile(r'(?:\n|\r\n)(' + pattern + r'[^\n\r]{0,50})(?:\n|\r\n)', re.IGNORECASE)
+            headers = header_pattern.findall(pdf_text)
+            
+            for header in headers:
+                header = header.strip()
+                if header:
+                    # Get content after the header
+                    start_idx = pdf_text.find(header)
+                    if start_idx == -1:
+                        continue
+                    
+                    end_idx = start_idx + len(header)
+                    
+                    # Find the next section header or limit to a reasonable amount of text
+                    next_header_match = re.search(r'(?:\n|\r\n)[A-Z][A-Za-z0-9\s\-,]+[\.\:]?(?:\n|\r\n)', pdf_text[end_idx:end_idx + 2000])
+                    
+                    if next_header_match:
+                        section_content = pdf_text[end_idx:end_idx + next_header_match.start()]
+                    else:
+                        # Limit to a reasonable length if no next header found
+                        section_content = pdf_text[end_idx:end_idx + 1500]
+                    
+                    # Clean and process the section content
+                    section_content = clean_text(section_content)
+                    
+                    # Add to results
+                    if section_content:
+                        # Add header as a section
+                        result['sections'][header] = section_content
+                        
+                        # Look for list-like patterns in the content
+                        list_items = self._extract_list_items(section_content)
+                        if list_items:
+                            # Store both the raw list and add to documentation
+                            result['lists'].append(list_items)
+                            result["Documentazione"].extend(list_items)
+                        else:
+                            # Add relevant sentences to documentation
+                            sentences = re.split(r'[.;]\s+', section_content)
+                            for sentence in sentences:
+                                if any(keyword in sentence.lower() for keyword in self.doc_keywords):
+                                    clean_sentence = clean_text(sentence)
+                                    if clean_sentence and len(clean_sentence) > 15:
+                                        result["Documentazione"].append(clean_sentence)
+        
+        # Look for documentation keywords in the text even if no clear section is found
+        if not result["Documentazione"]:
+            # Get sentences containing documentation keywords
+            for keyword in self.doc_keywords:
+                pattern = re.compile(r'([^.;!?]{0,30}' + keyword + r'[^.;!?]{5,100}[.;!?])', re.IGNORECASE)
+                matches = pattern.findall(pdf_text)
+                
+                for match in matches:
+                    clean_match = clean_text(match)
+                    if clean_match and len(clean_match) > 20:
+                        result["Documentazione"].append(clean_match)
+    
+    def _extract_list_items(self, text: str) -> List[str]:
+        """
+        Extracts items that appear to be in a list format from text.
+        
+        Args:
+            text (str): The text to analyze.
+            
+        Returns:
+            List[str]: Extracted list items.
+        """
+        list_items = []
+        
+        # Look for bullet points
+        bullet_pattern = re.compile(r'(?:^|\n|\s)[\•\-\*]\s+([^\n\•\-\*]+)', re.MULTILINE)
+        bullet_matches = bullet_pattern.findall(text)
+        if bullet_matches:
+            list_items.extend([clean_text(item) for item in bullet_matches if clean_text(item)])
+        
+        # Look for numbered items
+        numbered_pattern = re.compile(r'(?:^|\n|\s)(\d+[\.|\)])\s+([^\n]+)', re.MULTILINE)
+        numbered_matches = numbered_pattern.findall(text)
+        if numbered_matches:
+            list_items.extend([clean_text(item[1]) for item in numbered_matches if clean_text(item[1])])
+        
+        # Look for dash-prefixed items
+        dash_pattern = re.compile(r'(?:^|\n|\s)[-–—]\s+([^\n]+)', re.MULTILINE)
+        dash_matches = dash_pattern.findall(text)
+        if dash_matches:
+            list_items.extend([clean_text(item) for item in dash_matches if clean_text(item)])
+        
+        return list_items
+    
     def process_pdf(self, pdf_info: Dict[str, Any]) -> Dict[str, Any]:
         """
         Downloads and processes a PDF to extract comprehensive information.
@@ -213,9 +347,10 @@ class PDFProcessor:
         url = pdf_info['url']
         context = pdf_info.get('context', '')
         is_priority = pdf_info.get('priority', False)
+        is_doc_related = pdf_info.get('is_doc_related', False)
         
         try:
-            logger.info(f"Processing {'PRIORITY ' if is_priority else ''}PDF: {url}")
+            logger.info(f"Processing {'PRIORITY ' if is_priority else ''}{'DOC-RELATED ' if is_doc_related else ''}PDF: {url}")
             
             # Download the PDF
             pdf_path = self.download_pdf(url)
@@ -234,6 +369,7 @@ class PDFProcessor:
             result['source'] = url
             result['filename'] = os.path.basename(pdf_path)
             result['is_priority'] = is_priority
+            result['is_doc_related'] = is_doc_related
             
             return result
             
