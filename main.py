@@ -1,9 +1,8 @@
 """
 Main entry point for the grant documentation crawler.
 Orchestrates the entire process of updating grant information in Supabase.
-Enhanced to ensure documentation requirements are always extracted and timestamps are updated.
+Enhanced to search for specific documentation requirements and update the database with structured results.
 """
-# 11:51
 import logging
 import time
 import argparse
@@ -26,7 +25,7 @@ def process_grant(grant: Dict[str, Any]) -> Dict[str, Any]:
     """
     Processes a single grant to extract and update its documentation.
     Thoroughly analyzes all available information from websites and PDFs.
-    Ensures documentation is always extracted.
+    Searches for specific documentation requirements from the predefined list.
     
     Args:
         grant (Dict[str, Any]): The grant details from the database.
@@ -188,7 +187,7 @@ def process_grant(grant: Dict[str, Any]) -> Dict[str, Any]:
                 merged_data['errors'] = []
             merged_data['errors'].extend(error_messages)
         
-        # Generate comprehensive summary
+        # Generate comprehensive summary with specific documentation requirements checklist
         documentation_summary = doc_analyzer.generate_summary(merged_data)
         
         # Update the grant with the new documentation
@@ -230,6 +229,7 @@ def main():
     parser.add_argument('--verify-only', action='store_true', help='Only verify grant IDs exist without updating')
     parser.add_argument('--all-grants', action='store_true', help='Process all grants regardless of status')
     parser.add_argument('--max-retries', type=int, default=3, help='Maximum number of retries for failed processing')
+    parser.add_argument('--grant-id', help='Process only a specific grant ID')
     args = parser.parse_args()
     
     # Set up logging
@@ -241,8 +241,16 @@ def main():
         # Initialize database manager
         db_manager = DatabaseManager()
         
-        # Get grants (either active only or all based on the flag)
-        if args.all_grants:
+        # Process a single grant if ID is provided
+        if args.grant_id:
+            if db_manager.check_grant_exists(args.grant_id):
+                grants = [{"id": args.grant_id}]
+                logger.info(f"Processing single grant with ID: {args.grant_id}")
+            else:
+                logger.error(f"Grant {args.grant_id} does not exist in the database. Exiting.")
+                return
+        # Otherwise, get grants based on the flags
+        elif args.all_grants:
             grants = db_manager.get_all_grants()
             if not grants:
                 logger.info("No grants found in the database. Exiting.")

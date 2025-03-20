@@ -53,11 +53,39 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Error fetching active grants: {e}")
             raise
+            
+    @retry(
+        stop=stop_after_attempt(config.MAX_RETRIES),
+        wait=wait_exponential(multiplier=config.RETRY_BACKOFF)
+    )
+    def get_all_grants(self) -> List[Dict[str, Any]]:
+        """
+        Retrieves all grants from the bandi table regardless of status.
+        
+        Returns:
+            List[Dict[str, Any]]: List of all grants with their details.
+        """
+        try:
+            response = self.supabase.table(config.BANDI_TABLE) \
+                .select("id, link_bando, link_sito_bando, documentazione_necessaria, stato") \
+                .execute()
+            
+            if hasattr(response, 'data'):
+                logger.info(f"Retrieved {len(response.data)} total grants")
+                return response.data
+            else:
+                logger.warning("No data attribute in response")
+                return []
+                
+        except Exception as e:
+            logger.error(f"Error fetching all grants: {e}")
+            raise
     
     @retry(
         stop=stop_after_attempt(config.MAX_RETRIES),
         wait=wait_exponential(multiplier=config.RETRY_BACKOFF)
     )
+    # this function is not used in the current implementation 
     def check_grant_exists(self, grant_id: str) -> bool:
         """
         Checks if a grant exists in the database.
@@ -83,7 +111,10 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Error checking if grant {grant_id} exists: {e}")
             return False
-    
+    # this function is not used in the current implementation 
+    # but it can be useful in the future 
+    # for example to update the status of a grant 
+    # or to update the documentation of a grant        
     @retry(
         stop=stop_after_attempt(config.MAX_RETRIES),
         wait=wait_exponential(multiplier=config.RETRY_BACKOFF)
