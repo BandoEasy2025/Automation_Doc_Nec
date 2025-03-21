@@ -1,16 +1,32 @@
 """
 Handles downloading and processing PDF files to extract relevant text.
-Enhanced to better identify documentation requirements.
+Enhanced to better identify documentation requirements and handle errors gracefully.
 """
 import logging
 import os
 import re
 import tempfile
+import io
 from typing import Dict, List, Any, Optional, Tuple
 import requests
 from tenacity import retry, stop_after_attempt, wait_exponential
-from pdfminer.high_level import extract_text
-from io import BytesIO
+from urllib.parse import urlparse
+import chardet
+
+# Try to import pdfminer, but have fallback options
+PDF_EXTRACTOR = 'pdfminer'
+try:
+    from pdfminer.high_level import extract_text
+except ImportError:
+    try:
+        # Try PyPDF2 as fallback
+        import PyPDF2
+        PDF_EXTRACTOR = 'pypdf2'
+        logging.warning("Using PyPDF2 as fallback for PDF extraction")
+    except ImportError:
+        # If neither is available, we'll handle this in the methods
+        PDF_EXTRACTOR = 'none'
+        logging.error("No PDF extraction library available. Install pdfminer.six or PyPDF2.")
 
 import config
 from utils import clean_text, sanitize_filename, normalize_whitespace
@@ -24,6 +40,10 @@ class PDFProcessor:
         """Initialize the PDF processor."""
         self.session = requests.Session()
         self.session.headers.update(config.REQUEST_HEADERS)
+        
+        # For SSL issues, allow the option to disable verification
+        # ONLY USE THIS IF ABSOLUTELY NECESSARY - it's a security risk
+        self.ssl_verify = True
         
         # Create download directory if it doesn't exist
         os.makedirs(config.PDF_DOWNLOAD_DIR, exist_ok=True)
@@ -144,27 +164,53 @@ class PDFProcessor:
             Optional[str]: Path to the downloaded file or None if download failed.
         """
         try:
-            # Send a HEAD request first to check the file size
-            head_response = self.session.head(url, timeout=config.REQUEST_TIMEOUT, allow_redirects=True)
+            # Parse URL to get better filename
+            parsed_url = urlparse(url)
+            path = parsed_url.path
             
-            # Check if the URL is actually a PDF
-            content_type = head_response.headers.get('Content-Type', '').lower()
+            # First try a HEAD request to check if it's a PDF
+            try:
+                head_response = self.session.head(url, timeout=config.REQUEST_TIMEOUT, allow_redirects=True, verify=self.ssl_verify)
+                
+                # Check if the URL is actually a PDF
+                content_type = head_response.headers.get('Content-Type', '').lower()
+                if 'application/pdf' not in content_type and not url.lower().endswith('.pdf'):
+                    # Try again with SSL verification disabled if needed
+                    if self.ssl_verify and ('certificate' in str(head_response) or 'SSL' in str(head_response)):
+                        head_response = self.session.head(url, timeout=config.REQUEST_TIMEOUT, 
+                                                       allow_redirects=True, verify=False)
+                        content_type = head_response.headers.get('Content-Type', '').lower()
+                    
+                    # If still not a PDF, skip
+                    if 'application/pdf' not in content_type and not url.lower().endswith('.pdf'):
+                        logger.warning(f"URL {url} is not a PDF: {content_type}")
+                        return None
+                
+                # Check file size
+                content_length = head_response.headers.get('Content-Length')
+                if content_length and int(content_length) > config.MAX_PDF_SIZE:
+                    logger.warning(f"PDF at {url} is too large ({content_length} bytes)")
+                    return None
+            except requests.exceptions.SSLError:
+                # Try again with SSL verification disabled
+                logger.warning(f"SSL error during HEAD request for {url}, trying without verification")
+                self.ssl_verify = False
+            except Exception as e:
+                # If HEAD fails, we'll still try GET
+                logger.warning(f"HEAD request failed for {url}: {e}, trying GET")
+            
+            # Download the PDF
+            response = self.session.get(url, timeout=config.REQUEST_TIMEOUT, stream=True, verify=self.ssl_verify)
+            response.raise_for_status()
+            
+            # Check content type from actual response
+            content_type = response.headers.get('Content-Type', '').lower()
             if 'application/pdf' not in content_type and not url.lower().endswith('.pdf'):
                 logger.warning(f"URL {url} is not a PDF: {content_type}")
                 return None
             
-            # Check file size
-            content_length = head_response.headers.get('Content-Length')
-            if content_length and int(content_length) > config.MAX_PDF_SIZE:
-                logger.warning(f"PDF at {url} is too large ({content_length} bytes)")
-                return None
-            
-            # Download the PDF
-            response = self.session.get(url, timeout=config.REQUEST_TIMEOUT, stream=True)
-            response.raise_for_status()
-            
             # Create a safe filename from the URL
-            filename = sanitize_filename(os.path.basename(url))
+            filename = sanitize_filename(os.path.basename(path) or "downloaded_pdf")
             if not filename.lower().endswith('.pdf'):
                 filename += '.pdf'
                 
@@ -176,6 +222,35 @@ class PDFProcessor:
             
             logger.info(f"Successfully downloaded PDF from {url} to {filepath}")
             return filepath
+        except requests.exceptions.SSLError as e:
+            logger.error(f"SSL error downloading PDF from {url}: {e}")
+            if self.ssl_verify:
+                # Try again with SSL verification disabled
+                logger.warning(f"Retrying {url} with SSL verification disabled")
+                self.ssl_verify = False
+                try:
+                    response = self.session.get(url, timeout=config.REQUEST_TIMEOUT, stream=True, verify=False)
+                    response.raise_for_status()
+                    
+                    # Save to file
+                    filename = sanitize_filename(os.path.basename(url))
+                    if not filename.lower().endswith('.pdf'):
+                        filename += '.pdf'
+                    
+                    filepath = os.path.join(config.PDF_DOWNLOAD_DIR, filename)
+                    with open(filepath, 'wb') as f:
+                        for chunk in response.iter_content(chunk_size=8192):
+                            f.write(chunk)
+                    
+                    logger.info(f"Successfully downloaded PDF (without SSL verification) from {url} to {filepath}")
+                    return filepath
+                except Exception as e:
+                    logger.error(f"Still failed to download PDF from {url} even with SSL verification disabled: {e}")
+                    return None
+                finally:
+                    # Reset SSL verification for future requests
+                    self.ssl_verify = True
+            return None
         except requests.exceptions.RequestException as e:
             logger.error(f"Error downloading PDF from {url}: {e}")
             return None
@@ -195,11 +270,32 @@ class PDFProcessor:
         """
         try:
             logger.info(f"Extracting text from {pdf_path}")
-            text = extract_text(pdf_path)
             
+            if PDF_EXTRACTOR == 'pdfminer':
+                # Try with pdfminer
+                text = extract_text(pdf_path)
+            elif PDF_EXTRACTOR == 'pypdf2':
+                # Use PyPDF2 as fallback
+                text = ""
+                with open(pdf_path, 'rb') as file:
+                    reader = PyPDF2.PdfFileReader(file)
+                    for page_num in range(reader.numPages):
+                        text += reader.getPage(page_num).extractText()
+            else:
+                # No PDF library available
+                logger.error("No PDF extraction library available. Install pdfminer.six or PyPDF2.")
+                return "No PDF extraction library available. This PDF could not be processed."
+            
+            # Check if we got any text
             if not text:
                 logger.warning(f"No text content extracted from {pdf_path}")
-                return None
+                # Try a basic check to see if the file is a PDF
+                with open(pdf_path, 'rb') as f:
+                    header = f.read(5)
+                    if header != b'%PDF-':
+                        logger.error(f"File {pdf_path} is not a valid PDF (wrong header)")
+                        return None
+                return "PDF appears to be valid but no text could be extracted. It may be a scanned document or contain only images."
                 
             # Clean and normalize the extracted text
             text = normalize_whitespace(text)
@@ -207,7 +303,7 @@ class PDFProcessor:
             return text
         except Exception as e:
             logger.error(f"Error extracting text from {pdf_path}: {e}")
-            return None
+            return f"Error extracting text: {str(e)}"
     
     def process_pdf_content(self, pdf_text: str, context: str = "") -> Dict[str, Any]:
         """
@@ -222,125 +318,133 @@ class PDFProcessor:
             Dict[str, Any]: Structured information extracted from the PDF.
         """
         if not pdf_text:
-            return {}
+            return {'error': 'No PDF text content available'}
         
-        result = {
-            'context': context,
-            'main_content': pdf_text[:10000],  # Include more content for better analysis
-            'sections': {},
-            'lists': [],
-            'tables': [],
-            'Documentazione': []  # Special key for documentation items
-        }
-        
-        # Extract documentation-specific content first - more aggressively
-        self._extract_documentation_content(pdf_text, result)
-        
-        # Look for specific documentation items
-        self._extract_target_documentation_items(pdf_text, result)
-        
-        # Extract sections based on heading patterns - enhanced pattern
-        section_pattern = re.compile(r'(?:\n|\r\n)([A-Z][A-Za-z0-9\s\-,]+)[\.\:]?(?:\n|\r\n)')
-        sections = section_pattern.findall(pdf_text)
-        
-        for section in sections:
-            section_title = section.strip()
-            if not section_title or len(section_title) < 3 or len(section_title) > 100:
-                continue
-                
-            # Find section content - from this section title to the next
-            start_idx = pdf_text.find(section)
-            if start_idx == -1:
-                continue
-                
-            end_idx = pdf_text.find('\n', start_idx + len(section))
-            if end_idx == -1:
-                continue
-                
-            # Find the next section or the end of document
-            next_section_idx = pdf_text.find('\n', end_idx + 1)
-            if next_section_idx == -1:
-                section_content = pdf_text[end_idx:].strip()
-            else:
-                section_content = pdf_text[end_idx:next_section_idx].strip()
+        try:
+            result = {
+                'context': context,
+                'main_content': pdf_text[:10000],  # Include more content for better analysis
+                'sections': {},
+                'lists': [],
+                'tables': [],
+                'Documentazione': []  # Special key for documentation items
+            }
             
-            if section_content:
-                result['sections'][section_title] = clean_text(section_content)
-                
-                # Check if this section is related to documentation
-                section_lower = section_title.lower()
-                if any(re.search(pattern, section_lower) for pattern in self.doc_section_patterns):
-                    result['Documentazione'].append(f"{section_title}: {clean_text(section_content)}")
-        
-        # Extract lists (bullet points, numbered lists) - enhanced patterns
-        list_patterns = [
-            r'(?:\n|\r\n)(?:\s*[\•\-\*]\s*)([^\n]+)(?:\n|\r\n)(?:\s*[\•\-\*]\s*)([^\n]+)',  # Bullet lists
-            r'(?:\n|\r\n)(?:\s*\d+[\.\)]\s*)([^\n]+)(?:\n|\r\n)(?:\s*\d+[\.\)]\s*)([^\n]+)',  # Numbered lists
-            r'(?:\n|\r\n)(?:\s*[a-z][\.\)]\s*)([^\n]+)(?:\n|\r\n)(?:\s*[a-z][\.\)]\s*)([^\n]+)'  # Alphabetical lists
-        ]
-        
-        for pattern in list_patterns:
-            list_matches = re.findall(pattern, pdf_text)
-            if list_matches:
-                items = [clean_text(item) for group in list_matches for item in group if clean_text(item)]
-                if items:
-                    result['lists'].append(items)
+            # Extract documentation-specific content first - more aggressively
+            self._extract_documentation_content(pdf_text, result)
+            
+            # Look for specific documentation items
+            self._extract_target_documentation_items(pdf_text, result)
+            
+            # Extract sections based on heading patterns - enhanced pattern
+            section_pattern = re.compile(r'(?:\n|\r\n)([A-Z][A-Za-z0-9\s\-,]+)[\.\:]?(?:\n|\r\n)')
+            sections = section_pattern.findall(pdf_text)
+            
+            for section in sections:
+                section_title = section.strip()
+                if not section_title or len(section_title) < 3 or len(section_title) > 100:
+                    continue
                     
-                    # Check if list items are related to documentation
-                    doc_related_items = []
-                    for item in items:
-                        item_lower = item.lower()
-                        if any(keyword in item_lower for keyword in self.doc_keywords):
-                            doc_related_items.append(item)
+                # Find section content - from this section title to the next
+                start_idx = pdf_text.find(section)
+                if start_idx == -1:
+                    continue
                     
-                    if doc_related_items:
-                        result['Documentazione'].extend(doc_related_items)
-        
-        # Extract table-like structures
-        lines = pdf_text.split('\n')
-        potential_table_rows = []
-        
-        # Look for repeated patterns of spaces or tabs that might indicate columns
-        for i, line in enumerate(lines):
-            if i > 0 and i < len(lines) - 1:
-                if re.search(r'\s{2,}', line) and len(line.strip()) > 10:
-                    potential_table_rows.append(line)
-        
-        if len(potential_table_rows) >= 3:  # At least 3 rows for a table
-            result['tables'].append(potential_table_rows)
-            
-            # Check if table contains documentation keywords
-            table_text = ' '.join(potential_table_rows).lower()
-            if any(keyword in table_text for keyword in self.doc_keywords):
-                for row in potential_table_rows:
-                    clean_row = clean_text(row)
-                    if clean_row:
-                        result['Documentazione'].append(f"Dalla tabella: {clean_row}")
-        
-        # Extract information specifically related to grant requirements
-        for term in config.SEARCH_TERMS:
-            pattern = re.compile(r'(.{0,150}' + re.escape(term) + r'.{0,150})', re.IGNORECASE)
-            matches = pattern.findall(pdf_text)
-            
-            if matches:
-                term_key = term.capitalize()
-                if term_key not in result:
-                    result[term_key] = []
+                end_idx = pdf_text.find('\n', start_idx + len(section))
+                if end_idx == -1:
+                    continue
+                    
+                # Find the next section or the end of document
+                next_section_idx = pdf_text.find('\n', end_idx + 1)
+                if next_section_idx == -1:
+                    section_content = pdf_text[end_idx:].strip()
+                else:
+                    section_content = pdf_text[end_idx:next_section_idx].strip()
                 
-                for match in matches:
-                    clean_match = clean_text(match)
-                    if clean_match and clean_match not in result[term_key]:
-                        result[term_key].append(clean_match)
+                if section_content:
+                    result['sections'][section_title] = clean_text(section_content)
+                    
+                    # Check if this section is related to documentation
+                    section_lower = section_title.lower()
+                    if any(re.search(pattern, section_lower) for pattern in self.doc_section_patterns):
+                        result['Documentazione'].append(f"{section_title}: {clean_text(section_content)}")
+            
+            # Extract lists (bullet points, numbered lists) - enhanced patterns
+            list_patterns = [
+                r'(?:\n|\r\n)(?:\s*[\•\-\*]\s*)([^\n]+)(?:\n|\r\n)(?:\s*[\•\-\*]\s*)([^\n]+)',  # Bullet lists
+                r'(?:\n|\r\n)(?:\s*\d+[\.\)]\s*)([^\n]+)(?:\n|\r\n)(?:\s*\d+[\.\)]\s*)([^\n]+)',  # Numbered lists
+                r'(?:\n|\r\n)(?:\s*[a-z][\.\)]\s*)([^\n]+)(?:\n|\r\n)(?:\s*[a-z][\.\)]\s*)([^\n]+)'  # Alphabetical lists
+            ]
+            
+            for pattern in list_patterns:
+                list_matches = re.findall(pattern, pdf_text)
+                if list_matches:
+                    items = [clean_text(item) for group in list_matches for item in group if clean_text(item)]
+                    if items:
+                        result['lists'].append(items)
                         
-                        # If this term is documentation-related, add to documentation
-                        if term.lower() in ['documentazione', 'documenti', 'allegati', 'certificazioni']:
-                            result['Documentazione'].append(clean_match)
-        
-        # Remove duplicates in Documentazione
-        if result['Documentazione']:
-            result['Documentazione'] = list(dict.fromkeys(result['Documentazione']))
+                        # Check if list items are related to documentation
+                        doc_related_items = []
+                        for item in items:
+                            item_lower = item.lower()
+                            if any(keyword in item_lower for keyword in self.doc_keywords):
+                                doc_related_items.append(item)
+                        
+                        if doc_related_items:
+                            result['Documentazione'].extend(doc_related_items)
             
-        return result
+            # Extract table-like structures
+            lines = pdf_text.split('\n')
+            potential_table_rows = []
+            
+            # Look for repeated patterns of spaces or tabs that might indicate columns
+            for i, line in enumerate(lines):
+                if i > 0 and i < len(lines) - 1:
+                    if re.search(r'\s{2,}', line) and len(line.strip()) > 10:
+                        potential_table_rows.append(line)
+            
+            if len(potential_table_rows) >= 3:  # At least 3 rows for a table
+                result['tables'].append(potential_table_rows)
+                
+                # Check if table contains documentation keywords
+                table_text = ' '.join(potential_table_rows).lower()
+                if any(keyword in table_text for keyword in self.doc_keywords):
+                    for row in potential_table_rows:
+                        clean_row = clean_text(row)
+                        if clean_row:
+                            result['Documentazione'].append(f"Dalla tabella: {clean_row}")
+            
+            # Extract information specifically related to grant requirements
+            for term in config.SEARCH_TERMS:
+                pattern = re.compile(r'(.{0,150}' + re.escape(term) + r'.{0,150})', re.IGNORECASE)
+                matches = pattern.findall(pdf_text)
+                
+                if matches:
+                    term_key = term.capitalize()
+                    if term_key not in result:
+                        result[term_key] = []
+                    
+                    for match in matches:
+                        clean_match = clean_text(match)
+                        if clean_match and clean_match not in result[term_key]:
+                            result[term_key].append(clean_match)
+                            
+                            # If this term is documentation-related, add to documentation
+                            if term.lower() in ['documentazione', 'documenti', 'allegati', 'certificazioni']:
+                                result['Documentazione'].append(clean_match)
+            
+            # Remove duplicates in Documentazione
+            if result['Documentazione']:
+                result['Documentazione'] = list(dict.fromkeys(result['Documentazione']))
+                
+            return result
+        except Exception as e:
+            logger.error(f"Error processing PDF content: {e}")
+            return {
+                'context': context,
+                'error': f"Error processing PDF content: {str(e)}",
+                'main_content': pdf_text[:1000]  # Include some content to have something
+            }
     
     def _extract_documentation_content(self, pdf_text: str, result: Dict[str, Any]) -> None:
         """
@@ -351,78 +455,82 @@ class PDFProcessor:
             pdf_text (str): The PDF text content to analyze.
             result (Dict[str, Any]): The result dictionary to update.
         """
-        # Try to find documentation sections
-        for pattern in self.doc_section_patterns:
-            # Create a regex pattern that looks for headers
-            header_pattern = re.compile(r'(?:\n|\r\n)(' + pattern + r'[^\n\r]{0,50})(?:\n|\r\n)', re.IGNORECASE)
-            headers = header_pattern.findall(pdf_text)
-            
-            for header in headers:
-                header = header.strip()
-                if header:
-                    # Get content after the header
-                    start_idx = pdf_text.find(header)
-                    if start_idx == -1:
-                        continue
-                    
-                    end_idx = start_idx + len(header)
-                    
-                    # Find the next section header or limit to a reasonable amount of text
-                    next_header_match = re.search(r'(?:\n|\r\n)[A-Z][A-Za-z0-9\s\-,]+[\.\:]?(?:\n|\r\n)', pdf_text[end_idx:end_idx + 3000])
-                    
-                    if next_header_match:
-                        section_content = pdf_text[end_idx:end_idx + next_header_match.start()]
-                    else:
-                        # Limit to a reasonable length if no next header found
-                        section_content = pdf_text[end_idx:end_idx + 2000]
-                    
-                    # Clean and process the section content
-                    section_content = clean_text(section_content)
-                    
-                    # Add to results
-                    if section_content:
-                        # Add header as a section
-                        result['sections'][header] = section_content
+        try:
+            # Try to find documentation sections
+            for pattern in self.doc_section_patterns:
+                # Create a regex pattern that looks for headers
+                header_pattern = re.compile(r'(?:\n|\r\n)(' + pattern + r'[^\n\r]{0,50})(?:\n|\r\n)', re.IGNORECASE)
+                headers = header_pattern.findall(pdf_text)
+                
+                for header in headers:
+                    header = header.strip()
+                    if header:
+                        # Get content after the header
+                        start_idx = pdf_text.find(header)
+                        if start_idx == -1:
+                            continue
                         
-                        # Look for list-like patterns in the content
-                        list_items = self._extract_list_items(section_content)
-                        if list_items:
-                            # Store both the raw list and add to documentation
-                            result['lists'].append(list_items)
-                            result["Documentazione"].extend(list_items)
+                        end_idx = start_idx + len(header)
+                        
+                        # Find the next section header or limit to a reasonable amount of text
+                        next_header_match = re.search(r'(?:\n|\r\n)[A-Z][A-Za-z0-9\s\-,]+[\.\:]?(?:\n|\r\n)', pdf_text[end_idx:end_idx + 3000])
+                        
+                        if next_header_match:
+                            section_content = pdf_text[end_idx:end_idx + next_header_match.start()]
                         else:
-                            # Add relevant sentences to documentation
-                            sentences = re.split(r'[.;]\s+', section_content)
-                            for sentence in sentences:
-                                if any(keyword in sentence.lower() for keyword in self.doc_keywords):
-                                    clean_sentence = clean_text(sentence)
-                                    if clean_sentence and len(clean_sentence) > 15:
-                                        result["Documentazione"].append(clean_sentence)
-        
-        # Look for documentation keywords in the text even if no clear section is found
-        if not result["Documentazione"]:
-            # Get sentences containing documentation keywords
-            sentences = re.split(r'[.;!?]\s+', pdf_text)
-            
-            for sentence in sentences:
-                sentence_lower = sentence.lower()
-                if any(keyword in sentence_lower for keyword in self.doc_keywords):
-                    clean_sentence = clean_text(sentence)
-                    if clean_sentence and len(clean_sentence) > 20:
-                        result["Documentazione"].append(clean_sentence)
+                            # Limit to a reasonable length if no next header found
+                            section_content = pdf_text[end_idx:end_idx + 2000]
                         
-                        # Check if this looks like a list header
-                        is_list_header = re.search(r'(?:seguent|necessari|richied|presentare|allegare)', sentence_lower)
-                        if is_list_header:
-                            # Try to find subsequent list items
-                            sentence_index = sentences.index(sentence)
-                            for i in range(sentence_index+1, min(sentence_index+6, len(sentences))):
-                                next_sent = sentences[i]
-                                # Check if it looks like a list item
-                                if re.match(r'^[\s]*[-•*]\s|^\d+[.)\s]', next_sent):
-                                    clean_next = clean_text(next_sent)
-                                    if clean_next:
-                                        result["Documentazione"].append(clean_next)
+                        # Clean and process the section content
+                        section_content = clean_text(section_content)
+                        
+                        # Add to results
+                        if section_content:
+                            # Add header as a section
+                            result['sections'][header] = section_content
+                            
+                            # Look for list-like patterns in the content
+                            list_items = self._extract_list_items(section_content)
+                            if list_items:
+                                # Store both the raw list and add to documentation
+                                result['lists'].append(list_items)
+                                result["Documentazione"].extend(list_items)
+                            else:
+                                # Add relevant sentences to documentation
+                                sentences = re.split(r'[.;]\s+', section_content)
+                                for sentence in sentences:
+                                    if any(keyword in sentence.lower() for keyword in self.doc_keywords):
+                                        clean_sentence = clean_text(sentence)
+                                        if clean_sentence and len(clean_sentence) > 15:
+                                            result["Documentazione"].append(clean_sentence)
+            
+            # Look for documentation keywords in the text even if no clear section is found
+            if not result["Documentazione"]:
+                # Get sentences containing documentation keywords
+                sentences = re.split(r'[.;!?]\s+', pdf_text)
+                
+                for sentence in sentences:
+                    sentence_lower = sentence.lower()
+                    if any(keyword in sentence_lower for keyword in self.doc_keywords):
+                        clean_sentence = clean_text(sentence)
+                        if clean_sentence and len(clean_sentence) > 20:
+                            result["Documentazione"].append(clean_sentence)
+                            
+                            # Check if this looks like a list header
+                            is_list_header = re.search(r'(?:seguent|necessari|richied|presentare|allegare)', sentence_lower)
+                            if is_list_header:
+                                # Try to find subsequent list items
+                                sentence_index = sentences.index(sentence)
+                                for i in range(sentence_index+1, min(sentence_index+6, len(sentences))):
+                                    next_sent = sentences[i]
+                                    # Check if it looks like a list item
+                                    if re.match(r'^[\s]*[-•*]\s|^\d+[.)\s]', next_sent):
+                                        clean_next = clean_text(next_sent)
+                                        if clean_next:
+                                            result["Documentazione"].append(clean_next)
+        except Exception as e:
+            logger.error(f"Error extracting documentation content: {e}")
+            result["Documentazione"].append(f"Errore nell'elaborazione della documentazione: {str(e)}")
     
     def _extract_target_documentation_items(self, pdf_text: str, result: Dict[str, Any]) -> None:
         """
@@ -432,32 +540,36 @@ class PDFProcessor:
             pdf_text (str): The PDF text to analyze.
             result (Dict[str, Any]): The result dictionary to update.
         """
-        pdf_text_lower = pdf_text.lower()
-        sentences = re.split(r'[.;!?]\s+', pdf_text)
-        
-        # Check for each target documentation item
-        for doc_item in self.target_documentation:
-            item_found = False
-            for keyword in doc_item['keywords']:
-                if keyword.lower() in pdf_text_lower:
-                    item_found = True
-                    # Find sentences containing this keyword
+        try:
+            pdf_text_lower = pdf_text.lower()
+            sentences = re.split(r'[.;!?]\s+', pdf_text)
+            
+            # Check for each target documentation item
+            for doc_item in self.target_documentation:
+                item_found = False
+                for keyword in doc_item['keywords']:
+                    if keyword.lower() in pdf_text_lower:
+                        item_found = True
+                        # Find sentences containing this keyword
+                        for sentence in sentences:
+                            sentence_lower = sentence.lower()
+                            if keyword.lower() in sentence_lower:
+                                clean_sentence = clean_text(sentence)
+                                if clean_sentence and len(clean_sentence) > 15:
+                                    result["Documentazione"].append(f"{doc_item['name']}: {clean_sentence}")
+                
+                # If item name itself appears in the text
+                if not item_found and doc_item['name'].lower() in pdf_text_lower:
+                    # Find sentences containing this item name
                     for sentence in sentences:
                         sentence_lower = sentence.lower()
-                        if keyword.lower() in sentence_lower:
+                        if doc_item['name'].lower() in sentence_lower:
                             clean_sentence = clean_text(sentence)
                             if clean_sentence and len(clean_sentence) > 15:
-                                result["Documentazione"].append(f"{doc_item['name']}: {clean_sentence}")
-            
-            # If item name itself appears in the text
-            if not item_found and doc_item['name'].lower() in pdf_text_lower:
-                # Find sentences containing this item name
-                for sentence in sentences:
-                    sentence_lower = sentence.lower()
-                    if doc_item['name'].lower() in sentence_lower:
-                        clean_sentence = clean_text(sentence)
-                        if clean_sentence and len(clean_sentence) > 15:
-                            result["Documentazione"].append(clean_sentence)
+                                result["Documentazione"].append(clean_sentence)
+        except Exception as e:
+            logger.error(f"Error extracting target documentation items: {e}")
+            result["Documentazione"].append(f"Errore nell'identificazione degli elementi di documentazione: {str(e)}")
     
     def _extract_list_items(self, text: str) -> List[str]:
         """
@@ -526,17 +638,59 @@ class PDFProcessor:
         try:
             logger.info(f"Processing {'PRIORITY ' if is_priority else ''}{'DOC-RELATED ' if is_doc_related else ''}PDF: {url}")
             
+            # Try to determine the file type directly from the URL
+            parsed_url = urlparse(url)
+            path = parsed_url.path.lower()
+            
+            # If it's not a PDF, return minimal info
+            if not path.endswith('.pdf') and 'pdf' not in url.lower():
+                # Try to check with a HEAD request if we're unsure
+                try:
+                    head_response = self.session.head(url, timeout=config.REQUEST_TIMEOUT, 
+                                                   allow_redirects=True, verify=self.ssl_verify)
+                    content_type = head_response.headers.get('Content-Type', '').lower()
+                    if 'application/pdf' not in content_type:
+                        logger.warning(f"URL {url} doesn't appear to be a PDF based on name and content type")
+                        return {
+                            'source': url, 
+                            'context': context,
+                            'error': 'Not a PDF based on URL and content type',
+                            'is_priority': is_priority,
+                            'is_doc_related': is_doc_related,
+                            'filename': os.path.basename(path),
+                            'Documentazione': [f"Il documento all'URL {url} non sembra essere un PDF."]
+                        }
+                except Exception as e:
+                    # If we can't check with HEAD, we'll still try to download it
+                    logger.warning(f"Could not verify if {url} is a PDF via HEAD: {e}, will try download anyway")
+            
             # Download the PDF
             pdf_path = self.download_pdf(url)
             if not pdf_path:
-                return {}
+                return {
+                    'source': url, 
+                    'context': context,
+                    'error': 'Failed to download PDF',
+                    'is_priority': is_priority,
+                    'is_doc_related': is_doc_related,
+                    'filename': os.path.basename(url),
+                    'Documentazione': [f"Non è stato possibile scaricare il PDF dall'URL {url}."]
+                }
                 
             # Extract text from the PDF
             pdf_text = self.extract_text_from_pdf(pdf_path)
             if not pdf_text:
-                return {}
+                return {
+                    'source': url, 
+                    'context': context,
+                    'error': 'Failed to extract text from PDF',
+                    'is_priority': is_priority,
+                    'is_doc_related': is_doc_related,
+                    'filename': os.path.basename(pdf_path),
+                    'Documentazione': [f"Non è stato possibile estrarre il testo dal PDF scaricato: {os.path.basename(pdf_path)}."]
+                }
             
-            # Process the PDF content - enhanced with better documentation extraction
+            # Process the PDF content
             result = self.process_pdf_content(pdf_text, context)
             
             # Add metadata
@@ -545,11 +699,25 @@ class PDFProcessor:
             result['is_priority'] = is_priority
             result['is_doc_related'] = is_doc_related
             
+            # If this PDF was marked as documentation-related, add a note to ensure it's captured
+            if is_doc_related and context and not result.get('error'):
+                if 'Documentazione' not in result:
+                    result['Documentazione'] = []
+                result['Documentazione'].append(f"PDF rilevante per la documentazione: {context}")
+            
             return result
             
         except Exception as e:
             logger.error(f"Error processing PDF from {url}: {e}")
-            return {'source': url, 'error': str(e)}
+            return {
+                'source': url, 
+                'context': context,
+                'error': str(e),
+                'is_priority': is_priority,
+                'is_doc_related': is_doc_related,
+                'filename': os.path.basename(url) if '/' in url else 'unknown.pdf',
+                'Documentazione': [f"Errore nell'elaborazione del PDF: {str(e)}"]
+            }
     
     def close(self):
         """Close the session."""

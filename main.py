@@ -1,16 +1,18 @@
 """
 Main entry point for the grant documentation crawler.
 Orchestrates the entire process of finding specific documentation requirements in grants.
-Enhanced to provide more thorough and accurate documentation extraction.
+Enhanced with robust error handling for deployment.
 """
 import logging
 import time
 import argparse
 import os
-from typing import Dict, List, Any
+import sys
+from typing import Dict, List, Any, Optional
 import concurrent.futures
 from tqdm import tqdm
 from datetime import datetime
+import traceback
 
 import config
 from db_manager import DatabaseManager
@@ -21,10 +23,71 @@ from utils import setup_logging, is_valid_url
 
 logger = logging.getLogger(__name__)
 
+def check_dependencies():
+    """
+    Check if required dependencies are available and install if possible.
+    """
+    missing_deps = []
+    
+    # Check for BeautifulSoup
+    try:
+        import bs4
+        logger.info(f"BeautifulSoup version: {bs4.__version__}")
+    except ImportError:
+        missing_deps.append("beautifulsoup4")
+    
+    # Check for lxml
+    try:
+        import lxml
+        logger.info(f"lxml version: {lxml.__version__}")
+    except ImportError:
+        missing_deps.append("lxml")
+    
+    # Check for PDF processing library
+    try:
+        import pdfminer
+        logger.info(f"pdfminer version: {pdfminer.__version__}")
+    except ImportError:
+        try:
+            import PyPDF2
+            logger.info(f"PyPDF2 version: {PyPDF2.__version__}")
+        except ImportError:
+            missing_deps.append("pdfminer.six")
+    
+    # Check for other critical dependencies
+    try:
+        import requests
+        logger.info(f"requests version: {requests.__version__}")
+    except ImportError:
+        missing_deps.append("requests")
+    
+    try:
+        import nltk
+        logger.info(f"nltk version: {nltk.__version__}")
+    except ImportError:
+        missing_deps.append("nltk")
+    
+    # Try to install missing dependencies
+    if missing_deps:
+        logger.warning(f"Missing dependencies: {', '.join(missing_deps)}")
+        try:
+            import pip
+            for dep in missing_deps:
+                logger.info(f"Attempting to install {dep}...")
+                pip.main(['install', dep])
+            logger.info("Dependency installation attempted, please restart the crawler")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to install dependencies: {e}")
+            logger.error("Please install manually: pip install " + " ".join(missing_deps))
+            return False
+    
+    return True
+
 def process_grant(grant: Dict[str, Any]) -> Dict[str, Any]:
     """
     Processes a single grant to find specific documentation requirements.
-    Enhanced to more thoroughly analyze websites and PDFs for documentation items.
+    Enhanced with additional error handling and data extraction.
     
     Args:
         grant (Dict[str, Any]): The grant details from the database.
@@ -87,6 +150,13 @@ def process_grant(grant: Dict[str, Any]) -> Dict[str, Any]:
                                     break
                         except Exception as e:
                             logger.error(f"Error processing priority PDF {pdf_info.get('url')}: {str(e)}")
+                            # Still add some basic info about the failed PDF
+                            pdf_data.append({
+                                'source': pdf_info.get('url'),
+                                'context': pdf_info.get('context', ''),
+                                'error': str(e),
+                                'Documentazione': [f"Errore nell'elaborazione del PDF: {str(e)}"]
+                            })
                 
                 # Process non-priority PDFs if needed
                 if priority_pdfs_processed < 3:  # Increased requirement from 2 to 3
@@ -96,10 +166,12 @@ def process_grant(grant: Dict[str, Any]) -> Dict[str, Any]:
                             try:
                                 logger.info(f"Processing non-priority PDF: {pdf_info.get('url')}")
                                 pdf_result = pdf_processor.process_pdf(pdf_info)
-                                if pdf_result and not pdf_result.get('error'):
+                                if pdf_result:
+                                    # Even if there's an error, still add the PDF info
                                     pdf_data.append(pdf_result)
-                                    non_priority_pdfs += 1
-                                    logger.info(f"Successfully processed non-priority PDF: {pdf_info.get('url')}")
+                                    if not pdf_result.get('error'):
+                                        non_priority_pdfs += 1
+                                        logger.info(f"Successfully processed non-priority PDF: {pdf_info.get('url')}")
                                     
                                     # Limit to a reasonable number
                                     if non_priority_pdfs >= 3:
@@ -149,10 +221,11 @@ def process_grant(grant: Dict[str, Any]) -> Dict[str, Any]:
                             try:
                                 logger.info(f"Processing priority PDF from supplementary site: {pdf_info.get('url')}")
                                 pdf_result = pdf_processor.process_pdf(pdf_info)
-                                if pdf_result and not pdf_result.get('error'):
+                                if pdf_result:
                                     pdf_data.append(pdf_result)
-                                    priority_pdfs_processed += 1
-                                    logger.info(f"Successfully processed priority PDF: {pdf_info.get('url')}")
+                                    if not pdf_result.get('error'):
+                                        priority_pdfs_processed += 1
+                                        logger.info(f"Successfully processed priority PDF: {pdf_info.get('url')}")
                                     
                                     # Limit to a reasonable number
                                     if priority_pdfs_processed >= 5:  # Increased from 3 to 5
@@ -168,10 +241,11 @@ def process_grant(grant: Dict[str, Any]) -> Dict[str, Any]:
                                 try:
                                     logger.info(f"Processing non-priority PDF from supplementary site: {pdf_info.get('url')}")
                                     pdf_result = pdf_processor.process_pdf(pdf_info)
-                                    if pdf_result and not pdf_result.get('error'):
+                                    if pdf_result:
                                         pdf_data.append(pdf_result)
-                                        non_priority_pdfs += 1
-                                        logger.info(f"Successfully processed non-priority PDF: {pdf_info.get('url')}")
+                                        if not pdf_result.get('error'):
+                                            non_priority_pdfs += 1
+                                            logger.info(f"Successfully processed non-priority PDF: {pdf_info.get('url')}")
                                         
                                         # Limit to a reasonable number
                                         if non_priority_pdfs >= 3 or len(pdf_data) >= 10:
@@ -190,6 +264,31 @@ def process_grant(grant: Dict[str, Any]) -> Dict[str, Any]:
     # Clean up resources
     web_scraper.close()
     pdf_processor.close()
+    
+    # Even if nothing was found, still provide some basic documentation
+    if not web_data and not pdf_data:
+        basic_doc = f"""# Documentazione Necessaria per {nome_bando or 'il Bando'}
+
+## Avviso Importante
+Non è stato possibile recuperare informazioni specifiche sulla documentazione richiesta per questo bando.
+Si consiglia di consultare direttamente i link ufficiali per ottenere i dettagli completi:
+
+- Link principale: {link_bando or 'Non disponibile'}
+- Link supplementare: {link_sito_bando or 'Non disponibile'}
+
+## Documentazione Standard
+Generalmente, i bandi di questo tipo potrebbero richiedere:
+
+- Scheda progettuale o business plan
+- Piano finanziario delle entrate e delle spese
+- Documentazione amministrativa (visura camerale, DURC, etc.)
+- Informazioni sulla compagine sociale
+- Dichiarazioni sostitutive
+
+_Ultimo aggiornamento: {datetime.now().strftime("%d/%m/%Y %H:%M")}_
+"""
+        grant['documentation_summary'] = basic_doc
+        return grant
     
     # Merge and analyze all data
     try:
@@ -223,10 +322,26 @@ def process_grant(grant: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Error analyzing grant {grant_id}: {str(e)}")
         # Provide a basic documentation message in case of error
+        error_stack = traceback.format_exc()
+        logger.error(f"Stack trace: {error_stack}")
+        
         basic_message = f"""# Documentazione Necessaria per {nome_bando or 'il Bando'}
 
+## Nota Importante
 Non è stato possibile estrarre automaticamente la documentazione specifica per questo bando. 
 Si consiglia di consultare direttamente il bando ufficiale per i dettagli specifici.
+
+### Links
+- Link principale: {link_bando or 'Non disponibile'}
+- Link supplementare: {link_sito_bando or 'Non disponibile'}
+
+## Documentazione Standard
+Generalmente, per bandi di questa tipologia, è necessario presentare:
+
+- Documentazione amministrativa dell'impresa (es. visura camerale, DURC, etc.)
+- Documentazione tecnica del progetto
+- Documentazione economico-finanziaria
+- Documentazione relativa agli aspetti di sostenibilità
 
 ## Errori riscontrati
 {'; '.join(error_messages) if error_messages else 'Errore durante l\'analisi dei dati.'}
@@ -247,6 +362,8 @@ def main():
     parser.add_argument('--all-grants', action='store_true', help='Process all grants regardless of status')
     parser.add_argument('--max-retries', type=int, default=3, help='Maximum number of retries for failed processing')
     parser.add_argument('--grant-id', help='Process only a specific grant ID')
+    parser.add_argument('--install-deps', action='store_true', help='Check and install missing dependencies')
+    parser.add_argument('--skip-db-update', action='store_true', help='Skip updating the database (for testing)')
     args = parser.parse_args()
     
     # Set up logging
@@ -254,18 +371,37 @@ def main():
     
     logger.info("Starting grant documentation crawler")
     
+    # Check dependencies if requested
+    if args.install_deps:
+        if not check_dependencies():
+            logger.error("Missing dependencies, please install them and try again")
+            return
+    
     try:
         # Initialize database manager
         db_manager = DatabaseManager()
         
         # Process a single grant if ID is provided
         if args.grant_id:
-            if db_manager.check_grant_exists(args.grant_id):
+            try:
+                if db_manager.check_grant_exists(args.grant_id):
+                    # Get full grant info including name
+                    response = db_manager.supabase.table(config.BANDI_TABLE) \
+                        .select("id, link_bando, link_sito_bando, nome_bando") \
+                        .eq("id", args.grant_id) \
+                        .execute()
+                    if hasattr(response, 'data') and len(response.data) > 0:
+                        grants = response.data
+                    else:
+                        grants = [{"id": args.grant_id}]
+                    logger.info(f"Processing single grant with ID: {args.grant_id}")
+                else:
+                    logger.error(f"Grant {args.grant_id} does not exist in the database. Exiting.")
+                    return
+            except Exception as e:
+                logger.error(f"Error checking grant existence: {e}")
+                logger.warning(f"Will try to process grant ID {args.grant_id} anyway")
                 grants = [{"id": args.grant_id}]
-                logger.info(f"Processing single grant with ID: {args.grant_id}")
-            else:
-                logger.error(f"Grant {args.grant_id} does not exist in the database. Exiting.")
-                return
         # Otherwise, get grants based on the flags
         elif args.all_grants:
             grants = db_manager.get_all_grants()
@@ -325,6 +461,13 @@ _Ultimo aggiornamento: {datetime.now().strftime("%d/%m/%Y %H:%M")}_
                     processed_grants.append(grant)
         
         logger.info(f"Successfully processed {len(processed_grants)} grants")
+        
+        # Skip database update if requested
+        if args.skip_db_update:
+            logger.info("Skipping database update as requested")
+            for i, grant in enumerate(processed_grants):
+                logger.info(f"Grant {i+1}: {grant.get('id')}, documentation length: {len(grant.get('documentation_summary', ''))}")
+            return
         
         # Update the database with the new documentation
         updated_count = 0
