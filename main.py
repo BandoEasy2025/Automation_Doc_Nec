@@ -1,3 +1,4 @@
+# python main.py --grant-id YOUR_GRANT_ID
 """
 Enhanced grant documentation crawler.
 Focuses on extracting specific documentation requirements from grant websites and PDFs.
