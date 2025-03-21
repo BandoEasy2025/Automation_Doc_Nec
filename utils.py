@@ -1,5 +1,3 @@
-
-
 """
 Enhanced utility functions for the grant documentation crawler.
 Added functionality for better text processing and document extraction.
@@ -172,139 +170,80 @@ def truncate_text(text: str, max_length: int = 1000) -> str:
     # Truncate at the last period before max_length
     return text[:last_period + 1]
 
-def extract_document_info(text: str, document_keywords: List[str], 
-                         doc_section_patterns: List[str] = None) -> Dict[str, List[str]]:
+def contains_target_document_keyword(text: str, target_keywords: List[Dict[str, Any]]) -> bool:
     """
-    Extracts information about documentation requirements from text.
+    Checks if text contains any of the target documentation keywords.
+    
+    Args:
+        text (str): The text to check.
+        target_keywords (List[Dict[str, Any]]): List of target documentation items with their keywords.
+        
+    Returns:
+        bool: True if text contains any target keyword, False otherwise.
+    """
+    if not text:
+        return False
+    
+    text_lower = text.lower()
+    
+    for item in target_keywords:
+        if item["name"].lower() in text_lower:
+            return True
+        
+        if any(keyword.lower() in text_lower for keyword in item["keywords"]):
+            return True
+    
+    return False
+
+def extract_sentences_with_keywords(text: str, target_keywords: List[Dict[str, Any]]) -> Dict[str, List[str]]:
+    """
+    Extracts sentences containing target documentation keywords.
     
     Args:
         text (str): The text to analyze.
-        document_keywords (List[str]): Keywords related to documentation.
-        doc_section_patterns (List[str], optional): Patterns to identify documentation sections.
+        target_keywords (List[Dict[str, Any]]): List of target documentation items with their keywords.
         
     Returns:
-        Dict[str, List[str]]: Found documentation information categorized.
+        Dict[str, List[str]]: Dictionary mapping document types to sentences.
     """
-    if not text or not document_keywords:
+    if not text:
         return {}
     
-    found_docs = {
-        "general": [],
-        "sections": [],
-        "specific": {}
-    }
+    # Extract sentences
+    sentences = re.split(r'[.!?]\s+', text)
+    results = {}
     
-    # Tokenize text into sentences for analysis
-    sentences = re.split(r'(?<=[.!?])\s+', text)
-    
-    # Default section patterns if none provided
-    if not doc_section_patterns:
-        doc_section_patterns = [
-            r'document[azio\-\s]+necessari[ao]',
-            r'allegat[io]',
-            r'modulistic[ao]',
-            r'presentazione[\s]+(?:della[\s]+)?domanda'
-        ]
-    
-    # First pass: look for sentences with documentation keywords
+    # Check each sentence for target keywords
     for sentence in sentences:
         sentence_lower = sentence.lower()
         
-        # Check for documentation keywords
-        if any(keyword in sentence_lower for keyword in document_keywords):
-            clean_sentence = clean_text(sentence)
-            if clean_sentence and len(clean_sentence) > 15:
-                found_docs["general"].append(clean_sentence)
-                
-                # If it's a section header or list intro, add as section
-                if any(re.search(pattern, sentence_lower) for pattern in doc_section_patterns):
-                    found_docs["sections"].append(clean_sentence)
-                    
-                    # Check next few sentences for list items
-                    try:
-                        sentence_idx = sentences.index(sentence)
-                        for i in range(sentence_idx + 1, min(sentence_idx + 6, len(sentences))):
-                            next_sent = sentences[i]
-                            if re.match(r'^[\s]*[-•*]\s|^\d+[.)\s]', next_sent):
-                                clean_next = clean_text(next_sent)
-                                if clean_next:
-                                    found_docs["general"].append(clean_next)
-                    except ValueError:
-                        pass  # If sentence not found in list (unlikely)
-    
-    # Second pass: look for specific document types
-    common_docs = {
-        "visura camerale": ["visura", "camerale", "CCIAA"],
-        "DURC": ["DURC", "regolarità contributiva"],
-        "business plan": ["business plan", "piano aziendale"],
-        "dichiarazione sostitutiva": ["dichiarazione sostitutiva", "autocertificazione"],
-        "curriculum vitae": ["curriculum", "CV"],
-        "piano finanziario": ["piano finanziar", "budget", "preventivo"],
-        "scheda progettuale": ["scheda progett", "scheda tecnica"],
-        "fatture": ["fattur", "spesa", "giustificativ"],
-        "quietanze": ["quietanz", "pagament", "ricevut"]
-    }
-    
-    for doc_type, keywords in common_docs.items():
-        for sentence in sentences:
-            sentence_lower = sentence.lower()
-            if any(keyword in sentence_lower for keyword in keywords):
+        for item in target_keywords:
+            item_name = item["name"]
+            
+            # Check if sentence contains the item name or any of its keywords
+            if item_name.lower() in sentence_lower or any(kw.lower() in sentence_lower for kw in item["keywords"]):
                 clean_sentence = clean_text(sentence)
-                if clean_sentence and len(clean_sentence) > 15:
-                    if doc_type not in found_docs["specific"]:
-                        found_docs["specific"][doc_type] = []
-                    found_docs["specific"][doc_type].append(clean_sentence)
+                
+                if clean_sentence and len(clean_sentence) > 10:
+                    if item_name not in results:
+                        results[item_name] = []
+                    
+                    if clean_sentence not in results[item_name]:
+                        results[item_name].append(clean_sentence)
     
-    return found_docs
+    return results
 
-def format_documentation_output(doc_info: Dict[str, Any], grant_title: str = "") -> str:
+def format_bullet_points(items: List[str]) -> str:
     """
-    Formats documentation information into a structured output.
+    Formats a list of items as bullet points.
     
     Args:
-        doc_info (Dict[str, Any]): The documentation information to format.
-        grant_title (str, optional): The grant title.
+        items (List[str]): The items to format.
         
     Returns:
-        str: Formatted documentation information.
+        str: Formatted bullet point list.
     """
-    if not doc_info:
-        return "Nessuna informazione sulla documentazione necessaria è stata trovata."
-    
-    output_parts = []
-    
-    # Add title
-    if grant_title:
-        output_parts.append(f"# Documentazione Necessaria per {grant_title}")
-    else:
-        output_parts.append("# Documentazione Necessaria")
-    
-    # Add sections if available
-    if doc_info.get("sections"):
-        output_parts.append("\n## Sezioni di Documentazione")
-        for section in doc_info["sections"]:
-            output_parts.append(f"- {section}")
-    
-    # Add specific document types
-    if doc_info.get("specific"):
-        output_parts.append("\n## Documenti Specifici")
-        
-        for doc_type, sentences in doc_info["specific"].items():
-            output_parts.append(f"\n### {doc_type.capitalize()}")
-            for sentence in sentences:
-                output_parts.append(f"- {sentence}")
-    
-    # Add general documentation if available
-    if doc_info.get("general") and (not doc_info.get("sections") and not doc_info.get("specific")):
-        output_parts.append("\n## Informazioni Generali sulla Documentazione")
-        for item in doc_info["general"]:
-            output_parts.append(f"- {item}")
-    
-    # Add timestamp
-    from datetime import datetime
-    output_parts.append(f"\n_Ultimo aggiornamento: {datetime.now().strftime('%d/%m/%Y %H:%M')}_")
-    
-    return "\n".join(output_parts)
+    return "\n".join(f"• {item}" for item in items)
 
 def save_extracted_data(data: Dict[str, Any], filename: str) -> None:
     """
@@ -326,47 +265,28 @@ def save_extracted_data(data: Dict[str, Any], filename: str) -> None:
     except Exception as e:
         logger.error(f"Error saving extracted data: {e}")
 
-def extract_common_patterns(texts: List[str], min_occurrences: int = 2) -> List[str]:
+def find_matching_document_type(text: str, target_keywords: List[Dict[str, Any]]) -> Optional[str]:
     """
-    Extracts common text patterns from a list of texts.
-    Useful for finding recurring document requirements.
+    Finds the matching document type for a given text.
     
     Args:
-        texts (List[str]): List of text strings to analyze.
-        min_occurrences (int): Minimum number of occurrences to consider a pattern common.
+        text (str): The text to check.
+        target_keywords (List[Dict[str, Any]]): List of target documentation items with their keywords.
         
     Returns:
-        List[str]: List of common patterns found.
+        Optional[str]: Matching document type name or None.
     """
-    if not texts or len(texts) < min_occurrences:
-        return []
+    if not text:
+        return None
     
-    # Normalize and tokenize texts
-    normalized_texts = [clean_text(text).lower() for text in texts]
+    text_lower = text.lower()
     
-    # Extract word sequences (3-5 words) from texts
-    patterns = {}
-    for text in normalized_texts:
-        words = text.split()
-        if len(words) < 3:
-            continue
-            
-        # Generate 3-5 word sequences
-        for n in range(3, min(6, len(words) + 1)):
-            for i in range(len(words) - n + 1):
-                pattern = " ".join(words[i:i+n])
-                patterns[pattern] = patterns.get(pattern, 0) + 1
+    for item in target_keywords:
+        if item["name"].lower() in text_lower:
+            return item["name"]
+        
+        for keyword in item["keywords"]:
+            if keyword.lower() in text_lower:
+                return item["name"]
     
-    # Filter patterns by occurrence and significance
-    common_patterns = []
-    for pattern, count in patterns.items():
-        if count >= min_occurrences and len(pattern) > 10:
-            # Check if this pattern is not just part of a longer common pattern
-            is_unique = True
-            for existing in common_patterns:
-                if pattern in existing:
-                    is_unique = False
-                    break
-            if is_unique:
-                common_patterns.append(pattern)
-  
+    return None

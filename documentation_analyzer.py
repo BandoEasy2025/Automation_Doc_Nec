@@ -1,7 +1,3 @@
-"""
-Enhanced analyzer for grant documentation requirements.
-Improved to better identify and extract specific document requirements when PDFs can't be accessed.
-"""
 import logging
 import re
 from typing import Dict, List, Any, Set, Optional
@@ -25,58 +21,7 @@ class DocumentationAnalyzer:
         except LookupError:
             nltk.download('punkt')
         
-        # Define documentation-specific keywords for more aggressive matching
-        self.doc_keywords = [
-            # General documentation terms
-            'document', 'allegat', 'modulistic', 'certificaz', 
-            'richiest', 'presentare', 'obbligo', 'necessari',
-            'domanda', 'application', 'richiesta', 'presentazione',
-            
-            # Project documentation
-            'scheda progett', 'business plan', 'progetto imprenditor', 
-            'pitch', 'gantt', 'relazione', 'report', 'piano',
-            
-            # Financial documentation
-            'piano finanziar', 'budget', 'entrate e spese', 
-            'costi', 'investiment', 'economic', 'finanziar',
-            'dichiarazion redditi', 'dichiarazion iva', 'situazione economic',
-            'conto economic', 'previsional', 'spese',
-            
-            # Identification and legal documents
-            'firma', 'signature', 'digitale', 'copia', 'identity',
-            'identità', 'dichiarazione', 'declaration', 'formulario',
-            'modulo', 'form', 'attestazione', 'certification',
-            'dichiarazione sostitutiva', 'atto notorietà', 'DSAN',
-            
-            # Company/personnel documents
-            'visura', 'camerale', 'bilancio', 'curriculum', 
-            'cv', 'team', 'compagine social', 'soci',
-            'carta d\'identità', 'codice fiscale', 'partita iva',
-            
-            # Payment/expense documentation
-            'fattur', 'quietanz', 'pagament', 'giustificativ',
-            'ricevut', 'contribut', 'bonifico',
-            
-            # Compliance and certification
-            'DNSH', 'DURC', 'regolarità contributiva', 'antimafia',
-            'antiriciclaggio', 'casellario', 'giudizia', 
-            'certificato conformità', 'certificazione qualità',
-            'soa', 'attestato',
-            
-            # Property and location
-            'localizzazione', 'ubicazione', 'assenso propriet', 
-            'locazion', 'comodato', 'affitto', 'visura catastale',
-            
-            # Other specific documents
-            'inizio attività', 'fine corso', 'frequenza',
-            'self-assessment', 'sustainability', 'sostenibilit',
-            'conferimento', 'delega', 'legale rappresentante',
-            'brevetto', 'licenza', 'fideiussion', 'ANAC',
-            'intestazione fiduciaria', 'regolarità fiscal',
-            'registro imprese', 'sicurezza', 'attribuzione'
-        ]
-        
-        # Define target documentation items with detailed keywords
+        # Use the documentation items from config
         self.target_documentation = config.DOCUMENTATION_ITEMS
         
         # Additional mapping to group related document types
@@ -115,7 +60,7 @@ class DocumentationAnalyzer:
             ]
         }
         
-        logger.info("Documentation analyzer initialized with enhanced document type detection")
+        logger.info("Documentation analyzer initialized with target document types")
     
     def merge_grant_data(self, web_data: List[Dict[str, Any]], pdf_data: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
@@ -246,47 +191,11 @@ class DocumentationAnalyzer:
                         'text': list_text
                     })
             
-            # Merge tables
-            if 'tables' in data and data['tables']:
-                if 'tables' not in merged_data:
-                    merged_data['tables'] = []
-                
-                for table_key, table_data in data['tables'].items():
-                    merged_data['tables'].append({
-                        'title': table_key,
-                        'data': table_data
-                    })
-                    # Add to raw text for searching
-                    if isinstance(table_data, list):
-                        if table_data and isinstance(table_data[0], dict):
-                            table_text = ""
-                            for row in table_data:
-                                row_text = " ".join(str(v) for v in row.values())
-                                table_text += row_text + " "
-                            merged_data['raw_text'] += " " + table_text
-                            merged_data['all_content'].append({
-                                'source': f'web_table_{table_key}',
-                                'text': table_text
-                            })
-                        else:
-                            table_text = ""
-                            for row in table_data:
-                                if isinstance(row, list):
-                                    row_text = " ".join(str(cell) for cell in row)
-                                else:
-                                    row_text = str(row)
-                                table_text += row_text + " "
-                            merged_data['raw_text'] += " " + table_text
-                            merged_data['all_content'].append({
-                                'source': f'web_table_{table_key}',
-                                'text': table_text
-                            })
-                    
             # Look for documentation mentions in the main content
             if data.get('main_content'):
                 self._extract_documentation_from_text(data['main_content'], merged_data)
         
-        # Process PDF data
+        # Process PDF data - prioritize PDF data for documentation
         for data in pdf_data:
             # Keep track of PDF sources
             if data.get('source'):
@@ -340,24 +249,7 @@ class DocumentationAnalyzer:
                         'text': list_text
                     })
             
-            # Extract topic-specific information from PDFs
-            for key in data.keys():
-                if key in ['sections', 'lists', 'tables', 'source', 'filename', 'context', 'error', 'is_priority']:
-                    continue  # Skip metadata keys
-                
-                if isinstance(data[key], list):
-                    category = self._categorize_information(key, data[key])
-                    if category:
-                        merged_data[category].extend(data[key])
-                        # Add to collection
-                        text = " ".join(data[key])
-                        merged_data['raw_text'] += " " + text
-                        merged_data['all_content'].append({
-                            'source': f'pdf_categorized_{category}_{key}',
-                            'text': text
-                        })
-            
-            # Look for documentation mentions in PDF text
+            # Look for documentation mentions in PDF text - this is key for our extraction
             if data.get('main_content'):
                 self._extract_documentation_from_text(data['main_content'], merged_data)
             
@@ -407,7 +299,7 @@ class DocumentationAnalyzer:
     def _extract_documentation_from_text(self, text: str, merged_data: Dict[str, Any]) -> None:
         """
         Aggressively searches for documentation requirements in text.
-        Enhanced to identify specific document types.
+        Enhanced to identify specific document types from the target list.
         
         Args:
             text (str): The text to analyze.
@@ -419,33 +311,27 @@ class DocumentationAnalyzer:
         for sentence in sentences:
             sentence_lower = sentence.lower()
             
-            # Check if the sentence contains documentation keywords
-            if any(keyword in sentence_lower for keyword in self.doc_keywords):
-                clean_sentence = clean_text(sentence)
+            # Check for specific document types
+            for doc_item in self.target_documentation:
+                item_name = doc_item["name"]
+                matching_keywords = [kw for kw in doc_item["keywords"] if kw.lower() in sentence_lower]
                 
-                # Determine category by keyword prevalence
-                if any(kw in sentence_lower for kw in ['document', 'allegat', 'modulistic', 'certificaz']):
-                    if clean_sentence and clean_sentence not in merged_data['documentation']:
-                        merged_data['documentation'].append(clean_sentence)
-                elif any(kw in sentence_lower for kw in ['requisit', 'necessari', 'obblig']):
-                    if clean_sentence and clean_sentence not in merged_data['requirements']:
-                        merged_data['requirements'].append(clean_sentence)
-                
-                # Check for specific document types
-                for doc_item in self.target_documentation:
-                    item_name = doc_item["name"]
-                    matching_keywords = [kw for kw in doc_item["keywords"] if kw.lower() in sentence_lower]
+                if matching_keywords:
+                    if item_name not in merged_data['specific_documentation']:
+                        merged_data['specific_documentation'][item_name] = []
                     
-                    if matching_keywords:
-                        if item_name not in merged_data['specific_documentation']:
-                            merged_data['specific_documentation'][item_name] = []
+                    clean_sentence = clean_text(sentence)
+                    if clean_sentence and clean_sentence not in merged_data['specific_documentation'][item_name]:
+                        merged_data['specific_documentation'][item_name].append(clean_sentence)
                         
-                        if clean_sentence and clean_sentence not in merged_data['specific_documentation'][item_name]:
-                            merged_data['specific_documentation'][item_name].append(clean_sentence)
+                        # Also add to general documentation
+                        if clean_sentence not in merged_data['documentation']:
+                            merged_data['documentation'].append(clean_sentence)
     
     def _extract_documentation_aggressive(self, text: str) -> List[str]:
         """
         Performs a more aggressive search for documentation requirements when minimal info is found.
+        Focuses on the target documentation list.
         
         Args:
             text (str): The text to analyze.
@@ -458,58 +344,57 @@ class DocumentationAnalyzer:
         # Look for sentences that might indicate documentation
         sentences = sent_tokenize(text)
         
-        # Patterns that strongly suggest documentation requirements
-        strong_indicators = [
-            r'(?:allegare|presentare|documenti|documentazione)[\s]+(?:necessari|obbligatori|richiest)',
-            r'(?:documentazione|documenti)[\s]+(?:a[\s]+corredo|da[\s]+presentare|richiesta)',
-            r'(?:allegati|documenti)[\s]+(?:alla[\s]+domanda|al[\s]+bando)',
-            r'(?:alla[\s]+domanda|al[\s]+bando)[\s]+(?:vanno|devono|dovranno)[\s]+(?:allegat|presentat)',
-            r'(?:la[\s]+domanda|l\'istanza)[\s]+(?:deve|dovrà)[\s]+(?:essere[\s]+corredata|allegare)',
-            r'presenta\w+[\s]+i[\s]+seguenti[\s]+documenti'
-        ]
-        
-        # First look for sentences with strong indicators
+        # First aggressively look for any sentence containing our target documentation keywords
         for sentence in sentences:
             sentence_lower = sentence.lower()
             
-            # Check against strong indicators
-            for pattern in strong_indicators:
-                if re.search(pattern, sentence_lower):
+            for doc_item in self.target_documentation:
+                if any(kw.lower() in sentence_lower for kw in doc_item["keywords"]):
                     clean_sentence = clean_text(sentence)
                     if clean_sentence and len(clean_sentence) > 15 and clean_sentence not in documentation:
                         documentation.append(clean_sentence)
-                    
-                    # Also check if the next sentence might be a continuation
-                    idx = sentences.index(sentence)
-                    if idx < len(sentences) - 1:
-                        next_sentence = sentences[idx + 1]
-                        # Check if it looks like a list item or continuation
-                        if re.match(r'^[\s]*[-•*]\s|^\d+[.)\s]|^[a-z][.)\s]|^in[\s]+particolar', next_sentence.lower()):
-                            clean_next = clean_text(next_sentence)
-                            if clean_next and clean_next not in documentation:
-                                documentation.append(clean_next)
-                    
                     break
         
-        # If still limited info, look for any sentences containing documentation keywords
+        # If still limited info, look for typical documentation section patterns
         if len(documentation) < 3:
+            # Patterns that strongly suggest documentation requirements
+            strong_indicators = [
+                r'(?:allegare|presentare|documenti|documentazione)[\s]+(?:necessari|obbligatori|richiest)',
+                r'(?:documentazione|documenti)[\s]+(?:a[\s]+corredo|da[\s]+presentare|richiesta)',
+                r'(?:allegati|documenti)[\s]+(?:alla[\s]+domanda|al[\s]+bando)',
+                r'(?:alla[\s]+domanda|al[\s]+bando)[\s]+(?:vanno|devono|dovranno)[\s]+(?:allegat|presentat)',
+                r'(?:la[\s]+domanda|l\'istanza)[\s]+(?:deve|dovrà)[\s]+(?:essere[\s]+corredata|allegare)',
+                r'presenta\w+[\s]+i[\s]+seguenti[\s]+documenti'
+            ]
+            
             for sentence in sentences:
                 sentence_lower = sentence.lower()
                 
-                # Check if sentence contains any documentation keywords
-                if any(keyword in sentence_lower for keyword in self.doc_keywords):
-                    # Additional check: must contain verbs related to submission
-                    if any(verb in sentence_lower for verb in ['presentare', 'allegare', 'inviare', 'compilare', 'richiedere', 'necessario', 'obbligatorio']):
+                # Check against strong indicators
+                for pattern in strong_indicators:
+                    if re.search(pattern, sentence_lower):
                         clean_sentence = clean_text(sentence)
-                        if clean_sentence and len(clean_sentence) > 20 and clean_sentence not in documentation:
+                        if clean_sentence and len(clean_sentence) > 15 and clean_sentence not in documentation:
                             documentation.append(clean_sentence)
+                        
+                        # Also check if the next sentence might be a continuation
+                        idx = sentences.index(sentence)
+                        if idx < len(sentences) - 1:
+                            next_sentence = sentences[idx + 1]
+                            # Check if it looks like a list item or continuation
+                            if re.match(r'^[\s]*[-•*]\s|^\d+[.)\s]|^[a-z][.)\s]|^in[\s]+particolar', next_sentence.lower()):
+                                clean_next = clean_text(next_sentence)
+                                if clean_next and clean_next not in documentation:
+                                    documentation.append(clean_next)
+                        
+                        break
         
         return documentation
     
     def _categorize_information(self, key: str, values: List[str]) -> Optional[str]:
         """
         Categorizes information based on key and content.
-        Enhanced with more precise category detection.
+        Enhanced to better identify documentation sections.
         
         Args:
             key (str): The section title or key.
@@ -520,8 +405,9 @@ class DocumentationAnalyzer:
         """
         key_lower = key.lower()
         
-        # Document/requirements related - enhanced with more keywords
-        if any(term in key_lower for term in self.doc_keywords):
+        # Document/requirements related
+        if any(doc_item["name"].lower() in key_lower for doc_item in self.target_documentation) or \
+           any(any(kw.lower() in key_lower for kw in doc_item["keywords"]) for doc_item in self.target_documentation):
             return 'documentation'
         
         # Requirements related
@@ -545,7 +431,8 @@ class DocumentationAnalyzer:
             text = ' '.join(values)
             text_lower = text.lower()
             
-            if any(term in text_lower for term in self.doc_keywords):
+            if any(doc_item["name"].lower() in text_lower for doc_item in self.target_documentation) or \
+               any(any(kw.lower() in text_lower for kw in doc_item["keywords"]) for doc_item in self.target_documentation):
                 return 'documentation'
             elif re.search(r'scadenz|termin|entro il|deadline', text_lower):
                 return 'deadlines'
@@ -606,31 +493,7 @@ class DocumentationAnalyzer:
                             
                             # Only add unique, substantive sentences
                             if clean_sentence and len(clean_sentence) > 10 and clean_sentence not in extracted_docs[item_name]:
-                                # Check for list items or numbered items that might follow
-                                is_list_header = re.search(r'(?:seguent|necessari|richied|presentare|allegare)', sentence_lower)
-                                
-                                if is_list_header:
-                                    # If this looks like a list header, extract the following list items too
-                                    sentence_index = sentences.index(sentence)
-                                    list_items = []
-                                    
-                                    # Look at the next 5 sentences for potential list items
-                                    for i in range(sentence_index+1, min(sentence_index+6, len(sentences))):
-                                        next_sent = sentences[i]
-                                        # Check if it looks like a list item
-                                        if re.match(r'^[\s]*[-•*]\s|^\d+[.)\s]', next_sent):
-                                            list_items.append(clean_text(next_sent))
-                                    
-                                    if list_items:
-                                        # Add the header sentence and list items
-                                        extracted_docs[item_name].append(clean_sentence)
-                                        extracted_docs[item_name].extend(list_items)
-                                    else:
-                                        # Just add the regular sentence
-                                        extracted_docs[item_name].append(clean_sentence)
-                                else:
-                                    # Regular sentence
-                                    extracted_docs[item_name].append(clean_sentence)
+                                extracted_docs[item_name].append(clean_sentence)
         
         # Also process the main text in case we missed something in chunking
         raw_text = grant_data.get('raw_text', '')
@@ -644,8 +507,8 @@ class DocumentationAnalyzer:
                     extracted_docs[item_name] = []
                 
                 # Check if we already have content for this item
-                if extracted_docs[item_name]:
-                    continue  # Skip items we've already found
+                if len(extracted_docs[item_name]) >= 2:
+                    continue  # Skip items we've already found enough content for
                 
                 # Check if any keyword matches in the text
                 matching_keywords = [kw for kw in doc_item["keywords"] if kw.lower() in raw_text_lower]
@@ -658,16 +521,6 @@ class DocumentationAnalyzer:
                             clean_sentence = clean_text(sentence)
                             if clean_sentence and len(clean_sentence) > 15 and clean_sentence not in extracted_docs[item_name]:
                                 extracted_docs[item_name].append(clean_sentence)
-                                
-                                # Check for list items that might follow
-                                sentence_index = sentences.index(sentence)
-                                for i in range(sentence_index+1, min(sentence_index+3, len(sentences))):
-                                    next_sent = sentences[i]
-                                    # Check if it looks like a list item
-                                    if re.match(r'^[\s]*[-•*]\s|^\d+[.)\s]', next_sent):
-                                        clean_next = clean_text(next_sent)
-                                        if clean_next and clean_next not in extracted_docs[item_name]:
-                                            extracted_docs[item_name].append(clean_next)
         
         # Check for documentation items in lists
         for list_key, list_items in grant_data.get('lists', {}).items():
@@ -679,7 +532,7 @@ class DocumentationAnalyzer:
                     extracted_docs[item_name] = []
                 
                 # Match the list header with the documentation item
-                if any(kw.lower() in list_key_lower for kw in doc_item["keywords"]):
+                if doc_item["name"].lower() in list_key_lower or any(kw.lower() in list_key_lower for kw in doc_item["keywords"]):
                     for item in list_items:
                         if item and item not in extracted_docs[item_name]:
                             extracted_docs[item_name].append(item)
@@ -688,7 +541,7 @@ class DocumentationAnalyzer:
                 for item in list_items:
                     if item and isinstance(item, str):
                         item_lower = item.lower()
-                        if any(kw.lower() in item_lower for kw in doc_item["keywords"]):
+                        if doc_item["name"].lower() in item_lower or any(kw.lower() in item_lower for kw in doc_item["keywords"]):
                             if item not in extracted_docs[item_name]:
                                 extracted_docs[item_name].append(item)
         
@@ -706,7 +559,7 @@ class DocumentationAnalyzer:
                     extracted_docs[item_name] = []
                 
                 # Check if this general documentation item matches our target item
-                if any(kw.lower() in doc_lower for kw in target_item["keywords"]):
+                if target_item["name"].lower() in doc_lower or any(kw.lower() in doc_lower for kw in target_item["keywords"]):
                     if doc_item not in extracted_docs[item_name]:
                         extracted_docs[item_name].append(doc_item)
         
@@ -718,7 +571,7 @@ class DocumentationAnalyzer:
     def generate_documentation_content(self, extracted_docs: Dict[str, List[str]], grant_title: str = "") -> str:
         """
         Generates a structured report of the extracted documentation content.
-        Enhanced with categorization and formatting for better readability.
+        Enhanced with categorization and bullet-point formatting for better readability.
         
         Args:
             extracted_docs (Dict[str, List[str]]): Dictionary of documentation items with extracted content.
@@ -757,13 +610,13 @@ class DocumentationAnalyzer:
                     
                 content_parts.append(f"### {doc_name}")
                 
-                # Add each content item
+                # Add each content item as a bullet point
                 for i, content in enumerate(content_list):
                     # Avoid repeating almost identical sentences
                     if i > 0 and self._is_similar_to_previous(content, content_list[i-1]):
                         continue
                         
-                    content_parts.append(f"- {content}")
+                    content_parts.append(f"• {content}")
                 
                 # Add spacing between sections
                 content_parts.append("")
@@ -782,7 +635,7 @@ class DocumentationAnalyzer:
                     if i > 0 and self._is_similar_to_previous(content, content_list[i-1]):
                         continue
                         
-                    content_parts.append(f"- {content}")
+                    content_parts.append(f"• {content}")
                 
                 content_parts.append("")
         
@@ -823,91 +676,6 @@ class DocumentationAnalyzer:
         
         return categorized
     
-    def _group_similar_items(self, extracted_docs: Dict[str, List[str]]) -> Dict[str, List[str]]:
-        """
-        Groups similar documentation items together to avoid redundancy.
-        
-        Args:
-            extracted_docs (Dict[str, List[str]]): The extracted documentation items.
-            
-        Returns:
-            Dict[str, List[str]]: Grouped documentation items.
-        """
-        # Simple implementation: keep as is but detect and merge some common overlaps
-        grouped = {}
-        merged_keys = set()
-        
-        # Define common pairs to merge
-        merge_pairs = [
-            ("curriculum vitae", "curriculum vitae team imprenditoriale"),
-            ("copia delle ultime due dichiarazioni dei redditi", "dichiarazioni IVA"),
-            ("piano finanziario delle entrate e delle spese", "programma di investimento"),
-            ("copia dei pagamenti effettuati", "quietanze originali"),
-            ("fatture elettroniche", "documenti giustificativi di spesa")
-        ]
-        
-        # First handle merges
-        for key1, key2 in merge_pairs:
-            if key1 in extracted_docs and key2 in extracted_docs:
-                # Merge under the first key
-                combined_items = extracted_docs[key1] + [item for item in extracted_docs[key2] if item not in extracted_docs[key1]]
-                grouped[f"{key1} / {key2}"] = combined_items
-                merged_keys.add(key1)
-                merged_keys.add(key2)
-        
-        # Then add all non-merged items
-        for key, items in extracted_docs.items():
-            if key not in merged_keys:
-                grouped[key] = items
-                
-        return grouped
-    
-    def _sort_documentation_items(self, grouped_docs: Dict[str, List[str]]) -> List[str]:
-        """
-        Sorts documentation items by relevance/importance.
-        
-        Args:
-            grouped_docs (Dict[str, List[str]]): The grouped documentation items.
-            
-        Returns:
-            List[str]: Sorted list of documentation item keys.
-        """
-        # Priority items that should appear first if present
-        priority_items = [
-            "scheda progettuale",
-            "progetto imprenditoriale",
-            "Business plan",
-            "piano finanziario delle entrate e delle spese",
-            "DICHIARAZIONE D'INTENTI",
-            "dichiarazione sostitutiva",
-            "curriculum vitae"
-        ]
-        
-        # Score each documentation item
-        scored_items = {}
-        for key, items in grouped_docs.items():
-            # Base score on number of items and their length
-            base_score = len(items)
-            
-            # Priority boost
-            for priority in priority_items:
-                if priority in key.lower():
-                    base_score += 5
-                    break
-            
-            # Boost score if item appears to be mandatory
-            mandatory_patterns = ["obbligator", "necessari", "richiest", "presentare", "allegare"]
-            for item in items:
-                item_lower = item.lower()
-                if any(pattern in item_lower for pattern in mandatory_patterns):
-                    base_score += 2
-                    break
-            
-            scored_items[key] = base_score
-        
-        # Sort by score (descending)
-        return sorted(grouped_docs.keys(), key=lambda k: scored_items.get(k, 0), reverse=True)
-    
     def _is_similar_to_previous(self, current: str, previous: str) -> bool:
         """
         Checks if the current text is very similar to the previous one.
@@ -938,7 +706,7 @@ class DocumentationAnalyzer:
     def generate_summary(self, grant_data: Dict[str, Any]) -> str:
         """
         Generates a comprehensive summary of the grant documentation requirements.
-        Enhanced with more focus on specific document types.
+        Enhanced with bullet point formatting.
         
         Args:
             grant_data (Dict[str, Any]): The merged grant data.
@@ -953,7 +721,7 @@ class DocumentationAnalyzer:
         # Add general grant information if available
         grant_title = grant_data.get('title', 'Bando')
         
-        # Extract relevant content for each documentation target with an emphasis on website data
+        # Extract relevant content for each documentation target
         extracted_docs = self.extract_target_documentation(grant_data)
         
         # Check if we found specific documentation items
@@ -967,7 +735,7 @@ class DocumentationAnalyzer:
                 
                 for item in general_docs:
                     if item:
-                        content_parts.append(f"- {item}")
+                        content_parts.append(f"• {item}")
                 
                 # Add a timestamp
                 timestamp = datetime.now().strftime("%d/%m/%Y %H:%M")
@@ -987,8 +755,7 @@ Si consiglia di consultare direttamente il bando disponibile al sito ufficiale p
 _Ultimo aggiornamento: {datetime.now().strftime("%d/%m/%Y %H:%M")}_
 """
         
-        # Generate the structured documentation content
+        # Generate the structured documentation content with bullet points
         documentation_content = self.generate_documentation_content(extracted_docs, grant_title)
         
         return documentation_content
-    

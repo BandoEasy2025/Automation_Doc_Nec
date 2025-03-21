@@ -1,7 +1,6 @@
-# part3 
 """
-Web-only grant documentation crawler.
-Focuses solely on website content extraction without downloading PDFs.
+Enhanced grant documentation crawler.
+Focuses on extracting specific documentation requirements from grant websites and PDFs.
 """
 import logging
 import time
@@ -17,6 +16,7 @@ import traceback
 import config
 from db_manager import DatabaseManager
 from web_scraper import WebScraper
+from pdf_processor import PDFProcessor
 from documentation_analyzer import DocumentationAnalyzer
 from utils import setup_logging, is_valid_url
 
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 def process_grant(grant: Dict[str, Any]) -> Dict[str, Any]:
     """
     Processes a single grant to find specific documentation requirements.
-    Enhanced to extract documentation from websites only.
+    Extracts sentences containing specified documentation keywords from web content and PDFs.
     
     Args:
         grant (Dict[str, Any]): The grant details from the database.
@@ -40,14 +40,16 @@ def process_grant(grant: Dict[str, Any]) -> Dict[str, Any]:
     
     logger.info(f"Processing grant {grant_id}: {nome_bando}")
     
-    # Initialize components with enhanced website extraction capabilities
+    # Initialize components with enhanced capabilities
     web_scraper = WebScraper()
+    pdf_processor = PDFProcessor()
     doc_analyzer = DocumentationAnalyzer()
     
     web_data = []
+    pdf_data = []
     error_messages = []
     
-    # Process main grant webpage - this is now critical since we're not using PDFs
+    # Process main grant webpage
     if link_bando and is_valid_url(link_bando):
         logger.info(f"Processing main grant URL: {link_bando}")
         html_content = web_scraper.get_page_content(link_bando)
@@ -59,6 +61,39 @@ def process_grant(grant: Dict[str, Any]) -> Dict[str, Any]:
                 if web_info:
                     web_data.append(web_info)
                     logger.info(f"Successfully extracted information from {link_bando}")
+                    
+                    # Extract PDF links from the main page
+                    pdf_links = web_scraper.extract_pdf_links(html_content, link_bando)
+                    
+                    # Process high-priority PDFs (especially documentation-related ones)
+                    priority_pdfs = [pdf for pdf in pdf_links if pdf.get('priority', False) or pdf.get('is_doc_related', False)]
+                    other_pdfs = [pdf for pdf in pdf_links if not (pdf.get('priority', False) or pdf.get('is_doc_related', False))]
+                    
+                    # Process PDFs with higher priority first, limited to most relevant ones
+                    pdfs_to_process = priority_pdfs[:5]  # Process top 5 priority PDFs
+                    if len(pdfs_to_process) < 3:  # If fewer than 3 priority PDFs, add some others
+                        pdfs_to_process.extend(other_pdfs[:3 - len(pdfs_to_process)])
+                    
+                    logger.info(f"Found {len(pdfs_to_process)} relevant PDFs to process from {link_bando}")
+                    
+                    # Process PDFs in parallel for better performance
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+                        future_to_pdf = {executor.submit(pdf_processor.process_pdf, pdf): pdf for pdf in pdfs_to_process}
+                        
+                        for future in concurrent.futures.as_completed(future_to_pdf):
+                            pdf = future_to_pdf[future]
+                            try:
+                                result = future.result()
+                                if result and not result.get('error'):
+                                    pdf_data.append(result)
+                                    logger.info(f"Processed PDF: {pdf.get('url')}")
+                                else:
+                                    error_msg = result.get('error', 'Unknown error processing PDF')
+                                    logger.warning(f"Error processing PDF {pdf.get('url')}: {error_msg}")
+                                    error_messages.append(f"PDF Error: {error_msg}")
+                            except Exception as e:
+                                logger.error(f"Exception processing PDF {pdf.get('url')}: {str(e)}")
+                                error_messages.append(f"PDF Exception: {str(e)}")
             except Exception as e:
                 error_msg = f"Error extracting information from {link_bando}: {str(e)}"
                 logger.error(error_msg)
@@ -68,7 +103,7 @@ def process_grant(grant: Dict[str, Any]) -> Dict[str, Any]:
             logger.warning(error_msg)
             error_messages.append(error_msg)
     
-    # Process supplementary site if different 
+    # Process supplementary site if different
     if link_sito_bando and is_valid_url(link_sito_bando) and link_sito_bando != link_bando:
         logger.info(f"Processing supplementary grant URL: {link_sito_bando}")
         html_content = web_scraper.get_page_content(link_sito_bando)
@@ -80,6 +115,39 @@ def process_grant(grant: Dict[str, Any]) -> Dict[str, Any]:
                 if web_info:
                     web_data.append(web_info)
                     logger.info(f"Successfully extracted information from {link_sito_bando}")
+                    
+                    # Extract PDF links from the supplementary page
+                    pdf_links = web_scraper.extract_pdf_links(html_content, link_sito_bando)
+                    
+                    # Process high-priority PDFs (especially documentation-related ones)
+                    priority_pdfs = [pdf for pdf in pdf_links if pdf.get('priority', False) or pdf.get('is_doc_related', False)]
+                    other_pdfs = [pdf for pdf in pdf_links if not (pdf.get('priority', False) or pdf.get('is_doc_related', False))]
+                    
+                    # Process PDFs with higher priority first, limited to most relevant ones
+                    pdfs_to_process = priority_pdfs[:3]  # Process top 3 priority PDFs
+                    if len(pdfs_to_process) < 2:  # If fewer than 2 priority PDFs, add some others
+                        pdfs_to_process.extend(other_pdfs[:2 - len(pdfs_to_process)])
+                    
+                    logger.info(f"Found {len(pdfs_to_process)} relevant PDFs to process from {link_sito_bando}")
+                    
+                    # Process PDFs in parallel for better performance
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                        future_to_pdf = {executor.submit(pdf_processor.process_pdf, pdf): pdf for pdf in pdfs_to_process}
+                        
+                        for future in concurrent.futures.as_completed(future_to_pdf):
+                            pdf = future_to_pdf[future]
+                            try:
+                                result = future.result()
+                                if result and not result.get('error'):
+                                    pdf_data.append(result)
+                                    logger.info(f"Processed PDF: {pdf.get('url')}")
+                                else:
+                                    error_msg = result.get('error', 'Unknown error processing PDF')
+                                    logger.warning(f"Error processing PDF {pdf.get('url')}: {error_msg}")
+                                    error_messages.append(f"PDF Error: {error_msg}")
+                            except Exception as e:
+                                logger.error(f"Exception processing PDF {pdf.get('url')}: {str(e)}")
+                                error_messages.append(f"PDF Exception: {str(e)}")
             except Exception as e:
                 error_msg = f"Error extracting information from {link_sito_bando}: {str(e)}"
                 logger.error(error_msg)
@@ -89,22 +157,12 @@ def process_grant(grant: Dict[str, Any]) -> Dict[str, Any]:
             logger.warning(error_msg)
             error_messages.append(error_msg)
     
-    # Perform enhanced web extraction if we have some data but it may not be complete
-    if web_data:
-        try:
-            # Perform more aggressive extraction from web data
-            enhanced_web_data = _perform_enhanced_web_extraction(web_data, nome_bando)
-            if enhanced_web_data:
-                # Add this as the first item in web_data for higher priority
-                web_data.insert(0, enhanced_web_data)
-        except Exception as e:
-            logger.error(f"Error performing enhanced web extraction: {str(e)}")
-    
     # Clean up resources
     web_scraper.close()
+    pdf_processor.close()
     
     # Even if nothing was found, still provide some basic documentation
-    if not web_data:
+    if not web_data and not pdf_data:
         basic_doc = f"""# Documentazione Necessaria per {nome_bando or 'il Bando'}
 
 • Si consiglia di consultare direttamente i link ufficiali per ottenere i dettagli completi
@@ -125,11 +183,10 @@ _Ultimo aggiornamento: {datetime.now().strftime("%d/%m/%Y %H:%M")}_
         grant['documentation_summary'] = basic_doc
         return grant
     
-    # Merge and analyze web data
+    # Merge and analyze web and PDF data
     try:
-        logger.info(f"Merging and analyzing web data for grant {grant_id}")
-        # Pass empty list for pdf_data since we're not using PDFs
-        merged_data = doc_analyzer.merge_grant_data(web_data, [])
+        logger.info(f"Merging and analyzing data for grant {grant_id}")
+        merged_data = doc_analyzer.merge_grant_data(web_data, pdf_data)
         
         # Add grant name if available
         if nome_bando:
@@ -137,18 +194,20 @@ _Ultimo aggiornamento: {datetime.now().strftime("%d/%m/%Y %H:%M")}_
             if not merged_data.get('title'):
                 merged_data['title'] = nome_bando
         
-        # Generate comprehensive list of found documentation items
-        documentation_list = doc_analyzer.generate_summary(merged_data)
+        # Extract target documentation items based on specified keywords
+        extracted_docs = doc_analyzer.extract_target_documentation(merged_data)
+        
+        # Generate comprehensive documentation in bullet-point format
+        documentation_list = doc_analyzer.generate_documentation_content(extracted_docs, nome_bando)
         
         # Log stats about what we found
         logger.info(f"Found documentation items: {len(merged_data.get('documentation', []))} general items")
-        extracted_docs = doc_analyzer.extract_target_documentation(merged_data)
         logger.info(f"Found {len(extracted_docs)} specific documentation types")
         
         # Update the grant with the new documentation
         grant['documentation_summary'] = documentation_list
         
-        logger.info(f"Completed processing for grant {grant_id}: {len(web_data)} webpage sources")
+        logger.info(f"Completed processing for grant {grant_id}")
     except Exception as e:
         logger.error(f"Error analyzing grant {grant_id}: {str(e)}")
         # Provide a basic documentation message in case of error
@@ -175,117 +234,9 @@ _Ultimo aggiornamento: {datetime.now().strftime("%d/%m/%Y %H:%M")}_
     
     return grant
 
-def _perform_enhanced_web_extraction(web_data: List[Dict[str, Any]], grant_name: str) -> Dict[str, Any]:
-    """
-    Performs an enhanced extraction from web data.
-    Searches more aggressively for documentation requirements within the web content.
-    
-    Args:
-        web_data (List[Dict[str, Any]]): Information extracted from web pages.
-        grant_name (str): Name of the grant.
-        
-    Returns:
-        Dict[str, Any]: Enhanced grant information with focus on documentation.
-    """
-    # Start with an empty result
-    enhanced_data = {
-        'title': f"Enhanced Extraction: {grant_name}" if grant_name else "Enhanced Web Extraction",
-        'structured_info': {
-            'Documentazione_Specifica': {}
-        }
-    }
-    
-    # Extract content from all web pages
-    all_content = ""
-    for data in web_data:
-        if data.get('main_content'):
-            all_content += " " + data.get('main_content')
-        
-        # Look through all lists for documentation requirements
-        if 'lists' in data:
-            for list_title, list_items in data.get('lists', {}).items():
-                list_title_lower = list_title.lower()
-                # Check if list title suggests documentation
-                if any(term in list_title_lower for term in [
-                    'document', 'allegat', 'necessari', 'presentare', 'richiest',
-                    'moduli', 'modello', 'certificat', 'dichiarazion'
-                ]):
-                    # This list likely contains documentation requirements
-                    if 'Documentazione_Necessaria' not in enhanced_data['structured_info']:
-                        enhanced_data['structured_info']['Documentazione_Necessaria'] = []
-                    enhanced_data['structured_info']['Documentazione_Necessaria'].extend(list_items)
-                    
-                    # Try to categorize list items
-                    for item in list_items:
-                        item_lower = item.lower()
-                        
-                        # Check for common document types
-                        for doc_type, keywords in {
-                            "scheda progettuale": ["scheda", "progett", "tecnica"],
-                            "business plan": ["business", "piano", "aziendale"],
-                            "piano finanziario": ["finanziar", "economic", "budget"],
-                            "visura camerale": ["visura", "camerale", "CCIAA"],
-                            "DURC": ["DURC", "contribut", "regolarità"],
-                            "curriculum": ["curriculum", "CV", "vitae"],
-                            "dichiarazione sostitutiva": ["sostitutiva", "notorietà", "DPR"],
-                            "documenti di spesa": ["spesa", "giustificativ", "fattur"]
-                        }.items():
-                            if any(keyword in item_lower for keyword in keywords):
-                                if doc_type not in enhanced_data['structured_info']['Documentazione_Specifica']:
-                                    enhanced_data['structured_info']['Documentazione_Specifica'][doc_type] = []
-                                enhanced_data['structured_info']['Documentazione_Specifica'][doc_type].append(item)
-    
-    # Look for paragraphs containing documentation keywords
-    if all_content:
-        import re
-        from nltk.tokenize import sent_tokenize
-        
-        # Try to use NLTK for sentence tokenization
-        try:
-            sentences = sent_tokenize(all_content)
-        except:
-            # Fallback to simple regex if NLTK fails
-            sentences = re.split(r'(?<=[.!?])\s+', all_content)
-        
-        # Look for sentences containing documentation keywords
-        doc_sentences = []
-        for sentence in sentences:
-            sentence_lower = sentence.lower()
-            # Check if sentence contains documentation keywords
-            if any(keyword in sentence_lower for keyword in [
-                'document', 'allegat', 'presentare', 'necessari', 'richiest',
-                'moduli', 'modello', 'certificat', 'dichiarazion', 'curriculum',
-                'visura', 'DURC', 'business', 'piano', 'finanziar'
-            ]):
-                doc_sentences.append(sentence)
-                
-                # Special check for sentences that likely list documentation requirements
-                if re.search(r'(?:seguent|necessari|richiest|presentare|allegare)', sentence_lower):
-                    if 'Documentazione_Necessaria' not in enhanced_data['structured_info']:
-                        enhanced_data['structured_info']['Documentazione_Necessaria'] = []
-                    enhanced_data['structured_info']['Documentazione_Necessaria'].append(sentence)
-                    
-                    # Check the next 3 sentences for potential list items
-                    sentence_idx = sentences.index(sentence)
-                    for i in range(sentence_idx + 1, min(sentence_idx + 4, len(sentences))):
-                        next_sent = sentences[i]
-                        # Check if it looks like a list item
-                        if re.match(r'^[\s]*[-•*]\s|^\d+[.)\s]', next_sent):
-                            enhanced_data['structured_info']['Documentazione_Necessaria'].append(next_sent)
-        
-        # Store doc sentences if we found any
-        if doc_sentences:
-            enhanced_data['structured_info']['Documentazione_Paragrafi'] = doc_sentences
-    
-    # Add the full content (if we extracted it) for further processing
-    if all_content:
-        enhanced_data['main_content'] = all_content
-    
-    return enhanced_data
-
 def main():
-    """Main entry point for the web-only crawler."""
-    parser = argparse.ArgumentParser(description='Web-only Grant Documentation Crawler')
+    """Main entry point for the grant documentation crawler."""
+    parser = argparse.ArgumentParser(description='Grant Documentation Crawler')
     parser.add_argument('--log-level', default='INFO', help='Logging level')
     parser.add_argument('--max-workers', type=int, default=4, help='Maximum number of worker threads')
     parser.add_argument('--batch-size', type=int, default=0, help='Batch size (0 for all grants)')
@@ -299,7 +250,7 @@ def main():
     # Set up logging
     setup_logging(args.log_level)
     
-    logger.info("Starting web-only grant documentation crawler")
+    logger.info("Starting grant documentation crawler")
     
     try:
         # Initialize database manager
@@ -334,6 +285,7 @@ def main():
                 return
             logger.info(f"Found {len(grants)} total grants to process")
         else:
+            # By default, get only active grants
             grants = db_manager.get_active_grants()
             if not grants:
                 logger.info("No active grants found. Exiting.")
@@ -429,8 +381,7 @@ _Ultimo aggiornamento: {datetime.now().strftime("%d/%m/%Y %H:%M")}_
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}", exc_info=True)
     finally:
-        logger.info("Web-only grant documentation crawler finished")
+        logger.info("Grant documentation crawler finished")
 
 if __name__ == "__main__":
     main()
-    
