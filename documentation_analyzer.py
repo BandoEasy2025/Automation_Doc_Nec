@@ -311,15 +311,25 @@ class DocumentationAnalyzer:
         for sentence in sentences:
             sentence_lower = sentence.lower()
             
+            # First check for direct keywords like "documentazione" or "allegati"
+            general_doc_keywords = [
+                'document', 'allegat', 'modulistic', 'certificaz', 
+                'richiest', 'presentare', 'obbligo', 'necessari'
+            ]
+            
+            is_doc_sentence = any(keyword in sentence_lower for keyword in general_doc_keywords)
+            
             # Check for specific document types
+            specific_doc_found = False
             for doc_item in self.target_documentation:
                 item_name = doc_item["name"]
                 matching_keywords = [kw for kw in doc_item["keywords"] if kw.lower() in sentence_lower]
                 
-                if matching_keywords:
+                if matching_keywords or item_name.lower() in sentence_lower:
+                    specific_doc_found = True
                     if item_name not in merged_data['specific_documentation']:
                         merged_data['specific_documentation'][item_name] = []
-                    
+                
                     clean_sentence = clean_text(sentence)
                     if clean_sentence and clean_sentence not in merged_data['specific_documentation'][item_name]:
                         merged_data['specific_documentation'][item_name].append(clean_sentence)
@@ -327,6 +337,12 @@ class DocumentationAnalyzer:
                         # Also add to general documentation
                         if clean_sentence not in merged_data['documentation']:
                             merged_data['documentation'].append(clean_sentence)
+            
+            # If it's a documentation sentence but no specific type was found
+            if is_doc_sentence and not specific_doc_found:
+                clean_sentence = clean_text(sentence)
+                if clean_sentence and len(clean_sentence) > 15 and clean_sentence not in merged_data['documentation']:
+                    merged_data['documentation'].append(clean_sentence)
     
     def _extract_documentation_aggressive(self, text: str) -> List[str]:
         """
@@ -349,7 +365,7 @@ class DocumentationAnalyzer:
             sentence_lower = sentence.lower()
             
             for doc_item in self.target_documentation:
-                if any(kw.lower() in sentence_lower for kw in doc_item["keywords"]):
+                if doc_item["name"].lower() in sentence_lower or any(kw.lower() in sentence_lower for kw in doc_item["keywords"]):
                     clean_sentence = clean_text(sentence)
                     if clean_sentence and len(clean_sentence) > 15 and clean_sentence not in documentation:
                         documentation.append(clean_sentence)
@@ -571,7 +587,7 @@ class DocumentationAnalyzer:
     def generate_documentation_content(self, extracted_docs: Dict[str, List[str]], grant_title: str = "") -> str:
         """
         Generates a structured report of the extracted documentation content.
-        Enhanced with categorization and bullet-point formatting for better readability.
+        Enhanced to produce more concise, focused bullet points.
         
         Args:
             extracted_docs (Dict[str, List[str]]): Dictionary of documentation items with extracted content.
@@ -591,8 +607,6 @@ class DocumentationAnalyzer:
         else:
             content_parts.append("# Documentazione Necessaria")
         
-        content_parts.append("\nDi seguito sono elencati i documenti che potrebbero essere richiesti per questo bando, con dettagli estratti direttamente dal testo del bando.\n")
-        
         # Group documents by category for better organization
         categorized_docs = self._categorize_documents(extracted_docs)
         
@@ -610,13 +624,17 @@ class DocumentationAnalyzer:
                     
                 content_parts.append(f"### {doc_name}")
                 
-                # Add each content item as a bullet point
-                for i, content in enumerate(content_list):
+                # Add each content item - limit to 2 per document type to keep concise
+                for i, content in enumerate(content_list[:2]):
                     # Avoid repeating almost identical sentences
                     if i > 0 and self._is_similar_to_previous(content, content_list[i-1]):
                         continue
-                        
-                    content_parts.append(f"• {content}")
+                
+                    # Make sure each item is a bullet point
+                    if not content.startswith('•'):
+                        content_parts.append(f"• {content}")
+                    else:
+                        content_parts.append(f"{content}")
                 
                 # Add spacing between sections
                 content_parts.append("")
@@ -631,20 +649,21 @@ class DocumentationAnalyzer:
                     
                 content_parts.append(f"### {doc_name}")
                 
-                for i, content in enumerate(content_list):
+                for i, content in enumerate(content_list[:2]):
                     if i > 0 and self._is_similar_to_previous(content, content_list[i-1]):
                         continue
                         
-                    content_parts.append(f"• {content}")
+                    # Make sure each item is a bullet point
+                    if not content.startswith('•'):
+                        content_parts.append(f"• {content}")
+                    else:
+                        content_parts.append(f"{content}")
                 
                 content_parts.append("")
         
-        # Add a timestamp
+        # Add timestamp
         timestamp = datetime.now().strftime("%d/%m/%Y %H:%M")
         content_parts.append(f"\n_Ultimo aggiornamento: {timestamp}_")
-        
-        # Add a note about further verification
-        content_parts.append("\n**Nota**: Si consiglia di verificare sempre la documentazione richiesta consultando il testo completo del bando, in quanto potrebbero esserci requisiti specifici non estratti automaticamente.")
         
         return "\n".join(content_parts)
     
@@ -755,7 +774,7 @@ Si consiglia di consultare direttamente il bando disponibile al sito ufficiale p
 _Ultimo aggiornamento: {datetime.now().strftime("%d/%m/%Y %H:%M")}_
 """
         
-        # Generate the structured documentation content with bullet points
+        # Generate the structured documentation content
         documentation_content = self.generate_documentation_content(extracted_docs, grant_title)
         
         return documentation_content

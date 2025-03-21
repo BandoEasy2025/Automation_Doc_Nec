@@ -1,4 +1,3 @@
-# python main.py --grant-id YOUR_SPECIFIC_GRANT_ID --skip-db-update
 """
 Enhanced grant documentation crawler.
 Focuses on extracting specific documentation requirements from grant websites and PDFs.
@@ -19,7 +18,7 @@ from db_manager import DatabaseManager
 from web_scraper import WebScraper
 from pdf_processor import PDFProcessor
 from documentation_analyzer import DocumentationAnalyzer
-from utils import setup_logging, is_valid_url
+from utils import setup_logging, is_valid_url, filter_documentation_sentences
 
 logger = logging.getLogger(__name__)
 
@@ -185,29 +184,41 @@ def process_grant(grant: Dict[str, Any]) -> Dict[str, Any]:
     web_scraper.close()
     pdf_processor.close()
     
-    # If we found some documentation sentences directly, use them even if further processing fails
+    # If we found some documentation sentences, filter them against our target list
     if all_documentation_sentences:
         # Remove duplicates
         all_documentation_sentences = list(dict.fromkeys(all_documentation_sentences))
         
-        # Create a simple bullet-point document with the found sentences
-        documentation_md = f"# Documentazione Necessaria per {nome_bando or 'il Bando'}\n\n"
-        documentation_md += "Di seguito sono elencati i documenti e le informazioni trovati nel bando:\n\n"
+        # Filter the sentences to only include those matching our target documentation items
+        filtered_docs = filter_documentation_sentences(all_documentation_sentences, config.DOCUMENTATION_ITEMS)
         
-        for sentence in all_documentation_sentences:
-            documentation_md += f"• {sentence}\n"
+        # If we found relevant documentation after filtering
+        if filtered_docs:
+            # Create a simple bullet-point document with the found sentences
+            documentation_md = f"# Documentazione Necessaria per {nome_bando or 'il Bando'}\n\n"
+            
+            # Add each document type with its sentences
+            for doc_type, sentences in filtered_docs.items():
+                if sentences:
+                    documentation_md += f"## {doc_type}\n"
+                    for sentence in sentences[:2]:  # Limit to 2 sentences per document type to keep it concise
+                        documentation_md += f"• {sentence}\n"
+                    documentation_md += "\n"
+            
+            # Add links for reference
+            documentation_md += f"## Link di Riferimento\n"
+            documentation_md += f"• Bando principale: {link_bando or 'Non disponibile'}\n"
+            if link_sito_bando and link_sito_bando != link_bando:
+                documentation_md += f"• Sito supplementare: {link_sito_bando}\n"
+            
+            # Add timestamp
+            documentation_md += f"\n_Ultimo aggiornamento: {datetime.now().strftime('%d/%m/%Y %H:%M')}_"
+            
+            grant['documentation_summary'] = documentation_md
+            return grant
         
-        # Add links for reference
-        documentation_md += f"\n## Link di Riferimento\n"
-        documentation_md += f"• Bando principale: {link_bando or 'Non disponibile'}\n"
-        if link_sito_bando and link_sito_bando != link_bando:
-            documentation_md += f"• Sito supplementare: {link_sito_bando}\n"
-        
-        # Add timestamp
-        documentation_md += f"\n_Ultimo aggiornamento: {datetime.now().strftime('%d/%m/%Y %H:%M')}_"
-        
-        grant['documentation_summary'] = documentation_md
-        return grant
+        # If no matches were found after filtering, try the regular analysis
+        logger.info(f"No specific documentation matches found after filtering for grant {grant_id}, trying regular analysis")
     
     # If no direct sentences were found but we have web/pdf data, try the regular analysis
     if web_data or pdf_data:
@@ -223,6 +234,30 @@ def process_grant(grant: Dict[str, Any]) -> Dict[str, Any]:
             
             # Extract target documentation items based on specified keywords
             extracted_docs = doc_analyzer.extract_target_documentation(merged_data)
+            
+            # If we have extracted docs, create a simplified, focused output
+            if extracted_docs:
+                documentation_md = f"# Documentazione Necessaria per {nome_bando or 'il Bando'}\n\n"
+                
+                # Add each document type with bullet points
+                for doc_type, sentences in extracted_docs.items():
+                    if sentences:
+                        documentation_md += f"## {doc_type}\n"
+                        for sentence in sentences[:2]:  # Limit to 2 sentences per document type to keep it concise
+                            documentation_md += f"• {sentence}\n"
+                        documentation_md += "\n"
+                
+                # Add links for reference
+                documentation_md += f"## Link di Riferimento\n"
+                documentation_md += f"• Bando principale: {link_bando or 'Non disponibile'}\n"
+                if link_sito_bando and link_sito_bando != link_bando:
+                    documentation_md += f"• Sito supplementare: {link_sito_bando}\n"
+                
+                # Add timestamp
+                documentation_md += f"\n_Ultimo aggiornamento: {datetime.now().strftime('%d/%m/%Y %H:%M')}_"
+                
+                grant['documentation_summary'] = documentation_md
+                return grant
             
             # Generate comprehensive documentation in bullet-point format
             documentation_list = doc_analyzer.generate_documentation_content(extracted_docs, nome_bando)
@@ -240,38 +275,37 @@ def process_grant(grant: Dict[str, Any]) -> Dict[str, Any]:
             logger.error(f"Error analyzing grant {grant_id}: {str(e)}")
             # Continue to fallback below if this fails
     
-    # Final fallback: provide a more detailed error report instead of the generic message
-    detailed_report = f"""# Documentazione Necessaria per {nome_bando or 'il Bando'}
+    # Final fallback: provide a concise list of possible required documents 
+    fallback_docs = """
+# Documentazione Necessaria per {grant_name}
 
-Non è stato possibile estrarre informazioni specifiche sulla documentazione richiesta.
+Per questo bando potrebbero essere richiesti i seguenti documenti:
 
-## Link di Riferimento
-• Bando principale: {link_bando or 'Non disponibile'}
-"""
-    if link_sito_bando and link_sito_bando != link_bando:
-        detailed_report += f"• Sito supplementare: {link_sito_bando}\n"
-
-    detailed_report += """
-## Possibili Documenti Standard 
-I bandi di questa tipologia solitamente richiedono:
-
+## Documentazione Progettuale
 • Scheda progettuale o Business plan
 • Piano finanziario delle entrate e delle spese
-• Curriculum vitae dei proponenti
-• Dichiarazioni sul possesso dei requisiti 
-• Preventivi di spesa
-• Documentazione amministrativa dell'impresa
-• Relazioni tecniche e descrittive
-"""
+• Programma di investimento
+
+## Documentazione Amministrativa
+• Dichiarazione sostitutiva dell'atto di notorietà
+• Curriculum vitae del team imprenditoriale
+• Visura camerale
+
+## Documentazione Finanziaria
+• Dichiarazioni dei redditi e IVA
+• Situazione economica e patrimoniale
+• Documenti giustificativi di spesa
+
+## Link di Riferimento
+""".format(grant_name=nome_bando or 'il Bando')
     
-    if error_messages:
-        detailed_report += "\n## Errori Riscontrati\n"
-        for error in error_messages[:5]:  # Show up to 5 errors
-            detailed_report += f"• {error}\n"
+    fallback_docs += f"• Bando principale: {link_bando or 'Non disponibile'}\n"
+    if link_sito_bando and link_sito_bando != link_bando:
+        fallback_docs += f"• Sito supplementare: {link_sito_bando}\n"
     
-    detailed_report += f"\n_Ultimo aggiornamento: {datetime.now().strftime('%d/%m/%Y %H:%M')}_"
+    fallback_docs += f"\n_Ultimo aggiornamento: {datetime.now().strftime('%d/%m/%Y %H:%M')}_"
     
-    grant['documentation_summary'] = detailed_report
+    grant['documentation_summary'] = fallback_docs
     return grant
 
 def main():

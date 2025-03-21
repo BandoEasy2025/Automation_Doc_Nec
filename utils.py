@@ -170,6 +170,39 @@ def truncate_text(text: str, max_length: int = 1000) -> str:
     # Truncate at the last period before max_length
     return text[:last_period + 1]
 
+def filter_documentation_sentences(sentences: List[str], target_keywords: List[Dict[str, Any]]) -> Dict[str, List[str]]:
+    """
+    Filter sentences to only keep those matching target documentation keywords.
+    Group results by document type.
+    
+    Args:
+        sentences (List[str]): List of extracted sentences
+        target_keywords (List[Dict[str, Any]]): List of target documentation items with their keywords
+        
+    Returns:
+        Dict[str, List[str]]: Filtered sentences grouped by document type
+    """
+    result = {}
+    
+    for sentence in sentences:
+        if not sentence or len(sentence) < 15:
+            continue
+            
+        sentence_lower = sentence.lower()
+        
+        # Check against all target documentation items
+        for doc_item in target_keywords:
+            item_name = doc_item["name"]
+            if item_name.lower() in sentence_lower or any(kw.lower() in sentence_lower for kw in doc_item["keywords"]):
+                if item_name not in result:
+                    result[item_name] = []
+                
+                # Don't add duplicates
+                if sentence not in result[item_name]:
+                    result[item_name].append(sentence)
+    
+    return result
+
 def contains_target_document_keyword(text: str, target_keywords: List[Dict[str, Any]]) -> bool:
     """
     Checks if text contains any of the target documentation keywords.
