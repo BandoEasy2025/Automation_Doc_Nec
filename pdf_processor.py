@@ -2,8 +2,6 @@
 Handles downloading and processing PDF files to extract relevant text.
 Enhanced to better identify documentation requirements.
 """
-#updated 11:51
-
 import logging
 import os
 import re
@@ -37,7 +35,9 @@ class PDFProcessor:
             'domanda', 'application', 'richiesta', 'presentazione',
             'firma', 'signature', 'digitale', 'copia', 'identity',
             'identità', 'dichiarazione', 'declaration', 'formulario',
-            'modulo', 'form', 'attestazione', 'certification'
+            'modulo', 'form', 'attestazione', 'certification',
+            'visura', 'camerale', 'bilancio', 'curriculum', 'fattur',
+            'quietanz', 'business plan', 'contribut', 'report', 'relazion'
         ]
         
         # Specific section title patterns to look for in PDFs
@@ -50,7 +50,83 @@ class PDFProcessor:
             r'(?:domanda|istanza)[\s]+di[\s]+partecipazione',
             r'modulistic[ao]',
             r'certificazion[ei][\s]+(?:necessari[ae]|richiest[ae])',
-            r'prerequisiti[\s]+documentali'
+            r'prerequisiti[\s]+documentali',
+            r'(?:carta|documenti)[\s]+(?:d\'identità|identità)',
+            r'(?:curriculum|cv)[\s]+(?:vitae|professionale)',
+            r'scheda[\s]+(?:progett|tecnica)',
+            r'piano[\s]+(?:finanziario|economic|spese)',
+            r'business[\s]+plan',
+            r'visura[\s]+camerale',
+            r'dichiaraz[\s]+(?:redditi|iva)',
+            r'quietanz[ae]'
+        ]
+        
+        # Define target documentation items to look for - matches the analyzer
+        self.target_documentation = [
+            {"name": "scheda progettuale", "keywords": ["scheda progett", "scheda del progett", "progett", "piano di sviluppo"]},
+            {"name": "piano finanziario delle entrate e delle spese", "keywords": ["piano finanziar", "budget", "entrate e spese", "piano delle spese", "previsione di spesa"]},
+            {"name": "programma di investimento", "keywords": ["programma di invest", "piano di invest", "investiment"]},
+            {"name": "dichiarazione sul rispetto del DNSH", "keywords": ["DNSH", "Do No Significant Harm", "dichiarazione DNSH", "rispetto del DNSH"]},
+            {"name": "copia delle ultime due dichiarazioni dei redditi", "keywords": ["dichiarazion", "redditi", "dichiarazione dei redditi", "modello unico", "modello 730"]},
+            {"name": "dichiarazioni IVA", "keywords": ["IVA", "dichiarazione IVA", "dichiarazioni IVA", "imposta valore aggiunto"]},
+            {"name": "situazione economica e patrimoniale", "keywords": ["situazione economic", "situazione patrimonial", "stato patrimonial", "bilancio", "conto economic"]},
+            {"name": "conto economico previsionale", "keywords": ["conto economic", "economic prevision", "prevision", "bilancio prevision"]},
+            {"name": "documenti giustificativi di spesa", "keywords": ["giustificativ", "spesa", "document di spesa", "fattur", "quietanz"]},
+            {"name": "relazione dei lavori eseguiti", "keywords": ["relazione", "lavori eseguit", "relazione di esecuzione", "relazione tecnica"]},
+            {"name": "materiale promozionale", "keywords": ["material promozional", "promozion", "marketing", "pubblicit"]},
+            {"name": "informazioni su compagine sociale", "keywords": ["compagine social", "assetto societari", "soc", "struttura societaria"]},
+            {"name": "elenco delle agevolazioni pubbliche", "keywords": ["agevolazion", "contribut", "finanziam", "aiuti di stato", "de minimis"]},
+            {"name": "dichiarazione di inizio attività", "keywords": ["inizio attività", "DIA", "SCIA", "dichiarazione di inizio", "avvio attivit"]},
+            {"name": "progetto imprenditoriale", "keywords": ["progetto imprenditori", "business idea", "idea imprenditori", "proposta imprenditori"]},
+            {"name": "pitch", "keywords": ["pitch", "presentazione", "elevator pitch", "pitch deck"]},
+            {"name": "curriculum vitae", "keywords": ["curriculum", "CV", "curriculum vitae", "esperienza", "competenze"]},
+            {"name": "curriculum vitae team imprenditoriale", "keywords": ["curriculum team", "CV team", "team imprenditori", "soci", "fondatori"]},
+            {"name": "dichiarazione sulla localizzazione", "keywords": ["localizzazione", "ubicazione", "sede", "luogo", "dichiarazione localizzazione"]},
+            {"name": "atto di assenso del proprietario", "keywords": ["assenso", "propriet", "autorizzazione propriet", "consenso propriet"]},
+            {"name": "contratto di locazione", "keywords": ["locazion", "affitto", "contratto di locazione", "contratto d'affitto"]},
+            {"name": "contratto di comodato", "keywords": ["comodato", "comodato d'uso", "contratto di comodato"]},
+            {"name": "certificazione qualità", "keywords": ["certificazione qualit", "ISO", "certificato di qualit", "sistema qualit"]},
+            {"name": "fatture elettroniche", "keywords": ["fattur", "fattura elettronic", "fatturazione elettronic", "e-fattura"]},
+            {"name": "quietanze originali", "keywords": ["quietanz", "ricevut", "pagament", "bonifico", "pagamento effettuato"]},
+            {"name": "Business plan", "keywords": ["business plan", "piano di business", "piano aziendale", "piano d'impresa"]},
+            {"name": "dichiarazione sostitutiva", "keywords": ["dichiarazione sostitutiva", "autocertificazione", "DPR 445", "445/2000"]},
+            {"name": "copia dei pagamenti effettuati", "keywords": ["pagament", "bonifico", "estratto conto", "ricevuta di pagamento"]},
+            {"name": "dichiarazione di fine corso", "keywords": ["fine corso", "completamento corso", "attestazione finale", "conclusione corso"]},
+            {"name": "attestato di frequenza", "keywords": ["attestato", "frequenza", "partecipazione", "certificato di frequenza"]},
+            {"name": "report di self-assessment SUSTAINability", "keywords": ["self-assessment", "sustainability", "sostenibilit", "valutazione sostenibilit"]},
+            {"name": "relazione finale di progetto", "keywords": ["relazione final", "report final", "conclusione progett", "progetto concluso"]},
+            {"name": "Atto di conferimento", "keywords": ["conferimento", "atto di conferimento", "conferimento incarico", "mandato"]},
+            {"name": "investitore esterno", "keywords": ["investitor", "finanziator", "business angel", "venture capital", "investimento esterno"]},
+            {"name": "Delega del Legale rappresentante", "keywords": ["delega", "legale rappresentante", "rappresentanza", "procura"]},
+            {"name": "Budget dei costi", "keywords": ["budget", "costi", "preventivo", "piano dei costi", "previsione costi"]},
+            {"name": "Certificato di attribuzione del codice fiscale", "keywords": ["codice fiscale", "certificato attribuzione", "attribuzione codice", "agenzia entrate"]},
+            {"name": "Analisi delle entrate", "keywords": ["analisi entrate", "entrate", "ricavi", "introiti", "analisi ricavi"]},
+            {"name": "DURC", "keywords": ["DURC", "regolarità contributiva", "documento unico", "contributi"]},
+            {"name": "Dichiarazione antiriciclaggio", "keywords": ["antiriciclaggio", "riciclaggio", "AML", "D.lgs 231"]},
+            {"name": "Dichiarazioni antimafia", "keywords": ["antimafia", "certificazione antimafia", "informativa antimafia", "D.lgs 159"]},
+            {"name": "fideiussione", "keywords": ["fideiussion", "garanzia", "polizza fideiussoria", "garanzia bancaria"]},
+            {"name": "Casellario Giudiziale", "keywords": ["casellario", "giudiziale", "certificato penale", "carichi pendenti"]},
+            {"name": "Fideiussione Provvisoria", "keywords": ["fideiussione provvisoria", "garanzia provvisoria", "cauzione provvisoria"]},
+            {"name": "contributo ANAC", "keywords": ["ANAC", "autorità anticorruzione", "contributo gara"]},
+            {"name": "DICHIARAZIONE D'INTENTI", "keywords": ["intenti", "dichiarazione d'intenti", "lettera d'intenti", "manifestazione interesse"]},
+            {"name": "DICHIARAZIONE INTESTAZIONE FIDUCIARIA", "keywords": ["intestazione fiduciaria", "fiduciari", "trustee", "fiduciante"]},
+            {"name": "certificato di regolarità fiscale", "keywords": ["regolarità fiscal", "agenzia entrate", "debiti fiscali", "imposte"]},
+            {"name": "certificato di iscrizione al registro delle imprese", "keywords": ["registro imprese", "iscrizione camera", "CCIAA", "camera di commercio"]},
+            {"name": "piano di sicurezza", "keywords": ["sicurezza", "piano di sicurezza", "PSC", "coordinamento sicurezza"]},
+            {"name": "certificato di conformità", "keywords": ["conformità", "certificato conformità", "dichiarazione conformità", "attestazione conformità"]},
+            {"name": "Attestazione del professionista", "keywords": ["attestazione professionist", "perizia", "relazione professionist", "relazione tecnica"]},
+            {"name": "GANTT del progetto", "keywords": ["gantt", "cronoprogramma", "tempistiche", "pianificazione temporale"]},
+            {"name": "atto di nomina", "keywords": ["nomina", "atto di nomina", "designazione", "incarico"]},
+            {"name": "visura catastale", "keywords": ["visura catast", "catasto", "dati catastali", "estratto catastale"]},
+            {"name": "DSAN", "keywords": ["DSAN", "dichiarazione sostitutiva atto notorietà", "atto notorio", "dichiarazione sostitutiva"]},
+            {"name": "certificato di attribuzione di partita IVA", "keywords": ["partita IVA", "P.IVA", "attribuzione IVA", "certificato IVA"]},
+            {"name": "brevetto", "keywords": ["brevett", "patent", "proprietà intellettuale", "invenzione"]},
+            {"name": "licenza brevettuale", "keywords": ["licenza brevett", "licenza patent", "uso brevetto", "sfruttamento brevetto"]},
+            {"name": "attestato di certificazione del libretto", "keywords": ["libretto", "libretto di certificazione", "libretto formativo", "attestato libretto"]},
+            {"name": "visura camerale", "keywords": ["visura", "visura camerale", "camera di commercio", "registro imprese"]},
+            {"name": "carta d'identità", "keywords": ["carta d'identità", "documento identità", "carta identità", "ID"]},
+            {"name": "codice fiscale", "keywords": ["codice fiscale", "CF", "tessera sanitaria", "codice contribuente"]},
+            {"name": "certificato Soa", "keywords": ["SOA", "attestazione SOA", "qualificazione", "certificato SOA"]}
         ]
     
     @retry(
@@ -150,16 +226,20 @@ class PDFProcessor:
         
         result = {
             'context': context,
-            'main_content': pdf_text[:5000],  # First part of content
+            'main_content': pdf_text[:10000],  # Include more content for better analysis
             'sections': {},
             'lists': [],
-            'tables': []
+            'tables': [],
+            'Documentazione': []  # Special key for documentation items
         }
         
-        # Extract documentation-specific content first
+        # Extract documentation-specific content first - more aggressively
         self._extract_documentation_content(pdf_text, result)
         
-        # Extract sections based on heading patterns
+        # Look for specific documentation items
+        self._extract_target_documentation_items(pdf_text, result)
+        
+        # Extract sections based on heading patterns - enhanced pattern
         section_pattern = re.compile(r'(?:\n|\r\n)([A-Z][A-Za-z0-9\s\-,]+)[\.\:]?(?:\n|\r\n)')
         sections = section_pattern.findall(pdf_text)
         
@@ -186,11 +266,17 @@ class PDFProcessor:
             
             if section_content:
                 result['sections'][section_title] = clean_text(section_content)
+                
+                # Check if this section is related to documentation
+                section_lower = section_title.lower()
+                if any(re.search(pattern, section_lower) for pattern in self.doc_section_patterns):
+                    result['Documentazione'].append(f"{section_title}: {clean_text(section_content)}")
         
-        # Extract lists (bullet points, numbered lists)
+        # Extract lists (bullet points, numbered lists) - enhanced patterns
         list_patterns = [
             r'(?:\n|\r\n)(?:\s*[\•\-\*]\s*)([^\n]+)(?:\n|\r\n)(?:\s*[\•\-\*]\s*)([^\n]+)',  # Bullet lists
-            r'(?:\n|\r\n)(?:\s*\d+[\.\)]\s*)([^\n]+)(?:\n|\r\n)(?:\s*\d+[\.\)]\s*)([^\n]+)'  # Numbered lists
+            r'(?:\n|\r\n)(?:\s*\d+[\.\)]\s*)([^\n]+)(?:\n|\r\n)(?:\s*\d+[\.\)]\s*)([^\n]+)',  # Numbered lists
+            r'(?:\n|\r\n)(?:\s*[a-z][\.\)]\s*)([^\n]+)(?:\n|\r\n)(?:\s*[a-z][\.\)]\s*)([^\n]+)'  # Alphabetical lists
         ]
         
         for pattern in list_patterns:
@@ -199,6 +285,16 @@ class PDFProcessor:
                 items = [clean_text(item) for group in list_matches for item in group if clean_text(item)]
                 if items:
                     result['lists'].append(items)
+                    
+                    # Check if list items are related to documentation
+                    doc_related_items = []
+                    for item in items:
+                        item_lower = item.lower()
+                        if any(keyword in item_lower for keyword in self.doc_keywords):
+                            doc_related_items.append(item)
+                    
+                    if doc_related_items:
+                        result['Documentazione'].extend(doc_related_items)
         
         # Extract table-like structures
         lines = pdf_text.split('\n')
@@ -212,6 +308,14 @@ class PDFProcessor:
         
         if len(potential_table_rows) >= 3:  # At least 3 rows for a table
             result['tables'].append(potential_table_rows)
+            
+            # Check if table contains documentation keywords
+            table_text = ' '.join(potential_table_rows).lower()
+            if any(keyword in table_text for keyword in self.doc_keywords):
+                for row in potential_table_rows:
+                    clean_row = clean_text(row)
+                    if clean_row:
+                        result['Documentazione'].append(f"Dalla tabella: {clean_row}")
         
         # Extract information specifically related to grant requirements
         for term in config.SEARCH_TERMS:
@@ -227,21 +331,26 @@ class PDFProcessor:
                     clean_match = clean_text(match)
                     if clean_match and clean_match not in result[term_key]:
                         result[term_key].append(clean_match)
+                        
+                        # If this term is documentation-related, add to documentation
+                        if term.lower() in ['documentazione', 'documenti', 'allegati', 'certificazioni']:
+                            result['Documentazione'].append(clean_match)
         
+        # Remove duplicates in Documentazione
+        if result['Documentazione']:
+            result['Documentazione'] = list(dict.fromkeys(result['Documentazione']))
+            
         return result
     
     def _extract_documentation_content(self, pdf_text: str, result: Dict[str, Any]) -> None:
         """
         Specifically extracts documentation requirements from PDF text.
+        Enhanced to be more aggressive in finding documentation content.
         
         Args:
             pdf_text (str): The PDF text content to analyze.
             result (Dict[str, Any]): The result dictionary to update.
         """
-        # Initialize documentation collections if not present
-        if "Documentazione" not in result:
-            result["Documentazione"] = []
-        
         # Try to find documentation sections
         for pattern in self.doc_section_patterns:
             # Create a regex pattern that looks for headers
@@ -259,13 +368,13 @@ class PDFProcessor:
                     end_idx = start_idx + len(header)
                     
                     # Find the next section header or limit to a reasonable amount of text
-                    next_header_match = re.search(r'(?:\n|\r\n)[A-Z][A-Za-z0-9\s\-,]+[\.\:]?(?:\n|\r\n)', pdf_text[end_idx:end_idx + 2000])
+                    next_header_match = re.search(r'(?:\n|\r\n)[A-Z][A-Za-z0-9\s\-,]+[\.\:]?(?:\n|\r\n)', pdf_text[end_idx:end_idx + 3000])
                     
                     if next_header_match:
                         section_content = pdf_text[end_idx:end_idx + next_header_match.start()]
                     else:
                         # Limit to a reasonable length if no next header found
-                        section_content = pdf_text[end_idx:end_idx + 1500]
+                        section_content = pdf_text[end_idx:end_idx + 2000]
                     
                     # Clean and process the section content
                     section_content = clean_text(section_content)
@@ -293,18 +402,67 @@ class PDFProcessor:
         # Look for documentation keywords in the text even if no clear section is found
         if not result["Documentazione"]:
             # Get sentences containing documentation keywords
-            for keyword in self.doc_keywords:
-                pattern = re.compile(r'([^.;!?]{0,30}' + keyword + r'[^.;!?]{5,100}[.;!?])', re.IGNORECASE)
-                matches = pattern.findall(pdf_text)
-                
-                for match in matches:
-                    clean_match = clean_text(match)
-                    if clean_match and len(clean_match) > 20:
-                        result["Documentazione"].append(clean_match)
+            sentences = re.split(r'[.;!?]\s+', pdf_text)
+            
+            for sentence in sentences:
+                sentence_lower = sentence.lower()
+                if any(keyword in sentence_lower for keyword in self.doc_keywords):
+                    clean_sentence = clean_text(sentence)
+                    if clean_sentence and len(clean_sentence) > 20:
+                        result["Documentazione"].append(clean_sentence)
+                        
+                        # Check if this looks like a list header
+                        is_list_header = re.search(r'(?:seguent|necessari|richied|presentare|allegare)', sentence_lower)
+                        if is_list_header:
+                            # Try to find subsequent list items
+                            sentence_index = sentences.index(sentence)
+                            for i in range(sentence_index+1, min(sentence_index+6, len(sentences))):
+                                next_sent = sentences[i]
+                                # Check if it looks like a list item
+                                if re.match(r'^[\s]*[-•*]\s|^\d+[.)\s]', next_sent):
+                                    clean_next = clean_text(next_sent)
+                                    if clean_next:
+                                        result["Documentazione"].append(clean_next)
+    
+    def _extract_target_documentation_items(self, pdf_text: str, result: Dict[str, Any]) -> None:
+        """
+        Looks for specific target documentation items in the PDF text.
+        
+        Args:
+            pdf_text (str): The PDF text to analyze.
+            result (Dict[str, Any]): The result dictionary to update.
+        """
+        pdf_text_lower = pdf_text.lower()
+        sentences = re.split(r'[.;!?]\s+', pdf_text)
+        
+        # Check for each target documentation item
+        for doc_item in self.target_documentation:
+            item_found = False
+            for keyword in doc_item['keywords']:
+                if keyword.lower() in pdf_text_lower:
+                    item_found = True
+                    # Find sentences containing this keyword
+                    for sentence in sentences:
+                        sentence_lower = sentence.lower()
+                        if keyword.lower() in sentence_lower:
+                            clean_sentence = clean_text(sentence)
+                            if clean_sentence and len(clean_sentence) > 15:
+                                result["Documentazione"].append(f"{doc_item['name']}: {clean_sentence}")
+            
+            # If item name itself appears in the text
+            if not item_found and doc_item['name'].lower() in pdf_text_lower:
+                # Find sentences containing this item name
+                for sentence in sentences:
+                    sentence_lower = sentence.lower()
+                    if doc_item['name'].lower() in sentence_lower:
+                        clean_sentence = clean_text(sentence)
+                        if clean_sentence and len(clean_sentence) > 15:
+                            result["Documentazione"].append(clean_sentence)
     
     def _extract_list_items(self, text: str) -> List[str]:
         """
         Extracts items that appear to be in a list format from text.
+        Enhanced with additional patterns to catch more list formats.
         
         Args:
             text (str): The text to analyze.
@@ -331,6 +489,22 @@ class PDFProcessor:
         dash_matches = dash_pattern.findall(text)
         if dash_matches:
             list_items.extend([clean_text(item) for item in dash_matches if clean_text(item)])
+        
+        # Look for lettered list items
+        letter_pattern = re.compile(r'(?:^|\n|\s)([a-z][\.|\)])\s+([^\n]+)', re.MULTILINE)
+        letter_matches = letter_pattern.findall(text)
+        if letter_matches:
+            list_items.extend([clean_text(item[1]) for item in letter_matches if clean_text(item[1])])
+        
+        # Look for indented paragraphs that might be list items
+        indent_pattern = re.compile(r'(?:^|\n)\s{2,}([^\n\s][^\n]{10,})', re.MULTILINE)
+        indent_matches = indent_pattern.findall(text)
+        if indent_matches:
+            for item in indent_matches:
+                clean_item = clean_text(item)
+                # Only add if it doesn't look like a standard paragraph (e.g., it likely starts with a keyword)
+                if clean_item and any(keyword in clean_item.lower()[:30] for keyword in self.doc_keywords):
+                    list_items.append(clean_item)
         
         return list_items
     
@@ -362,7 +536,7 @@ class PDFProcessor:
             if not pdf_text:
                 return {}
             
-            # Process the PDF content
+            # Process the PDF content - enhanced with better documentation extraction
             result = self.process_pdf_content(pdf_text, context)
             
             # Add metadata

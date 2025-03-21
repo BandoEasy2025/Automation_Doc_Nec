@@ -20,7 +20,9 @@ REQUEST_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
     "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
 }
-
+# the Accept-language header is set to italian to prioritize italian content 
+# and to avoid issues with language detection 
+# (e.g. some websites may have multiple languages and the default language may not be italian) 
 # Retry settings
 MAX_RETRIES = 5  # increased for reliability
 RETRY_BACKOFF = 2  # seconds

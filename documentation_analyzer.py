@@ -32,10 +32,12 @@ class DocumentationAnalyzer:
             'domanda', 'application', 'richiesta', 'presentazione',
             'firma', 'signature', 'digitale', 'copia', 'identity',
             'identità', 'dichiarazione', 'declaration', 'formulario',
-            'modulo', 'form', 'attestazione', 'certification'
+            'modulo', 'form', 'attestazione', 'certification',
+            'visura', 'camerale', 'bilancio', 'curriculum', 'fattur',
+            'quietanz', 'business plan', 'contribut', 'report', 'relazion'
         ]
         
-        # Define target documentation items to extract from the content
+        # Define target documentation items to extract from the content - updated with user-provided list
         self.target_documentation = [
             {"name": "scheda progettuale", "keywords": ["scheda progett", "scheda del progett", "progett", "piano di sviluppo"]},
             {"name": "piano finanziario delle entrate e delle spese", "keywords": ["piano finanziar", "budget", "entrate e spese", "piano delle spese", "previsione di spesa"]},
@@ -334,6 +336,10 @@ class DocumentationAnalyzer:
             # Look for documentation mentions in PDF text
             if data.get('main_content'):
                 self._extract_documentation_from_text(data['main_content'], merged_data)
+            
+            # Special handling for "Documentazione" key in PDF data
+            if "Documentazione" in data and isinstance(data["Documentazione"], list):
+                merged_data["documentation"].extend(data["Documentazione"])
         
         # Categorize all the sections
         for key, value in all_sections.items():
@@ -436,6 +442,7 @@ class DocumentationAnalyzer:
     def extract_target_documentation(self, grant_data: Dict[str, Any]) -> Dict[str, List[str]]:
         """
         Extracts content specifically related to target documentation items.
+        Enhanced to be more aggressive in identifying documentation requirements.
         
         Args:
             grant_data (Dict[str, Any]): The merged grant data.
@@ -525,18 +532,71 @@ class DocumentationAnalyzer:
                             clean_sentence = clean_text(sentence)
                             if clean_sentence and len(clean_sentence) > 15 and clean_sentence not in extracted_docs[item_name]:
                                 extracted_docs[item_name].append(clean_sentence)
+                                
+                                # Check for list items that might follow
+                                sentence_index = sentences.index(sentence)
+                                for i in range(sentence_index+1, min(sentence_index+3, len(sentences))):
+                                    next_sent = sentences[i]
+                                    # Check if it looks like a list item
+                                    if re.match(r'^[\s]*[-•*]\s|^\d+[.)\s]', next_sent):
+                                        clean_next = clean_text(next_sent)
+                                        if clean_next and clean_next not in extracted_docs[item_name]:
+                                            extracted_docs[item_name].append(clean_next)
+        
+        # Check for documentation items in lists
+        for list_key, list_items in grant_data.get('lists', {}).items():
+            list_key_lower = list_key.lower()
+            
+            for doc_item in self.target_documentation:
+                item_name = doc_item["name"]
+                if item_name not in extracted_docs:
+                    extracted_docs[item_name] = []
+                
+                # Match the list header with the documentation item
+                if any(kw.lower() in list_key_lower for kw in doc_item["keywords"]):
+                    for item in list_items:
+                        if item and item not in extracted_docs[item_name]:
+                            extracted_docs[item_name].append(item)
+                
+                # Also check each list item for keywords
+                for item in list_items:
+                    if item and isinstance(item, str):
+                        item_lower = item.lower()
+                        if any(kw.lower() in item_lower for kw in doc_item["keywords"]):
+                            if item not in extracted_docs[item_name]:
+                                extracted_docs[item_name].append(item)
+        
+        # Process general documentation sections
+        for doc_item in grant_data.get('documentation', []):
+            if not doc_item:
+                continue
+                
+            doc_lower = doc_item.lower()
+            
+            # Match with target documentation items
+            for target_item in self.target_documentation:
+                item_name = target_item["name"]
+                if item_name not in extracted_docs:
+                    extracted_docs[item_name] = []
+                
+                # Check if this general documentation item matches our target item
+                if any(kw.lower() in doc_lower for kw in target_item["keywords"]):
+                    if doc_item not in extracted_docs[item_name]:
+                        extracted_docs[item_name].append(doc_item)
         
         # Remove empty items
         extracted_docs = {k: v for k, v in extracted_docs.items() if v}
         
         return extracted_docs
     
-    def generate_documentation_content(self, extracted_docs: Dict[str, List[str]]) -> str:
+    def generate_documentation_content(self, extracted_docs: Dict[str, List[str]], grant_title: str = "") -> str:
         """
         Generates a structured report of the extracted documentation content.
+        Enhanced formatting and organization for better readability.
         
         Args:
             extracted_docs (Dict[str, List[str]]): Dictionary of documentation items with extracted content.
+            grant_title (str): Title of the grant for adding context.
             
         Returns:
             str: A formatted summary of found documentation details.
@@ -546,15 +606,34 @@ class DocumentationAnalyzer:
         
         content_parts = []
         
+        # Add a title if provided
+        if grant_title:
+            content_parts.append(f"# Documentazione Necessaria per {grant_title}")
+        else:
+            content_parts.append("# Documentazione Necessaria")
+        
+        content_parts.append("\nDi seguito sono elencati i documenti che potrebbero essere richiesti per questo bando, con dettagli estratti direttamente dal testo del bando.\n")
+        
+        # Group similar documentation items
+        grouped_docs = self._group_similar_items(extracted_docs)
+        
+        # Sort documentation items by relevance/importance
+        sorted_items = self._sort_documentation_items(grouped_docs)
+        
         # Add each documentation item with its extracted content
-        for doc_name, content_list in extracted_docs.items():
+        for doc_name in sorted_items:
+            content_list = grouped_docs[doc_name]
             if not content_list:
                 continue
                 
             content_parts.append(f"## {doc_name}")
             
             # Add each content item
-            for content in content_list:
+            for i, content in enumerate(content_list):
+                # Avoid repeating almost identical sentences
+                if i > 0 and self._is_similar_to_previous(content, content_list[i-1]):
+                    continue
+                    
                 content_parts.append(f"- {content}")
             
             # Add spacing between sections
@@ -564,11 +643,127 @@ class DocumentationAnalyzer:
         timestamp = datetime.now().strftime("%d/%m/%Y %H:%M")
         content_parts.append(f"\n_Ultimo aggiornamento: {timestamp}_")
         
+        # Add a note about further verification
+        content_parts.append("\n**Nota**: Si consiglia di verificare sempre la documentazione richiesta consultando il testo completo del bando, in quanto potrebbero esserci requisiti specifici non estratti automaticamente.")
+        
         return "\n".join(content_parts)
+    
+    def _group_similar_items(self, extracted_docs: Dict[str, List[str]]) -> Dict[str, List[str]]:
+        """
+        Groups similar documentation items together to avoid redundancy.
+        
+        Args:
+            extracted_docs (Dict[str, List[str]]): The extracted documentation items.
+            
+        Returns:
+            Dict[str, List[str]]: Grouped documentation items.
+        """
+        # Simple implementation: keep as is but detect and merge some common overlaps
+        grouped = {}
+        merged_keys = set()
+        
+        # Define common pairs to merge
+        merge_pairs = [
+            ("curriculum vitae", "curriculum vitae team imprenditoriale"),
+            ("copia delle ultime due dichiarazioni dei redditi", "dichiarazioni IVA"),
+            ("piano finanziario delle entrate e delle spese", "programma di investimento"),
+            ("copia dei pagamenti effettuati", "quietanze originali"),
+            ("fatture elettroniche", "documenti giustificativi di spesa")
+        ]
+        
+        # First handle merges
+        for key1, key2 in merge_pairs:
+            if key1 in extracted_docs and key2 in extracted_docs:
+                # Merge under the first key
+                combined_items = extracted_docs[key1] + [item for item in extracted_docs[key2] if item not in extracted_docs[key1]]
+                grouped[f"{key1} / {key2}"] = combined_items
+                merged_keys.add(key1)
+                merged_keys.add(key2)
+        
+        # Then add all non-merged items
+        for key, items in extracted_docs.items():
+            if key not in merged_keys:
+                grouped[key] = items
+                
+        return grouped
+    
+    def _sort_documentation_items(self, grouped_docs: Dict[str, List[str]]) -> List[str]:
+        """
+        Sorts documentation items by relevance/importance.
+        
+        Args:
+            grouped_docs (Dict[str, List[str]]): The grouped documentation items.
+            
+        Returns:
+            List[str]: Sorted list of documentation item keys.
+        """
+        # Priority items that should appear first if present
+        priority_items = [
+            "scheda progettuale",
+            "progetto imprenditoriale",
+            "Business plan",
+            "piano finanziario delle entrate e delle spese",
+            "DICHIARAZIONE D'INTENTI",
+            "dichiarazione sostitutiva",
+            "curriculum vitae"
+        ]
+        
+        # Score each documentation item
+        scored_items = {}
+        for key, items in grouped_docs.items():
+            # Base score on number of items and their length
+            base_score = len(items)
+            
+            # Priority boost
+            for priority in priority_items:
+                if priority in key.lower():
+                    base_score += 5
+                    break
+            
+            # Boost score if item appears to be mandatory
+            mandatory_patterns = ["obbligator", "necessari", "richiest", "presentare", "allegare"]
+            for item in items:
+                item_lower = item.lower()
+                if any(pattern in item_lower for pattern in mandatory_patterns):
+                    base_score += 2
+                    break
+            
+            scored_items[key] = base_score
+        
+        # Sort by score (descending)
+        return sorted(grouped_docs.keys(), key=lambda k: scored_items.get(k, 0), reverse=True)
+    
+    def _is_similar_to_previous(self, current: str, previous: str) -> bool:
+        """
+        Checks if the current text is very similar to the previous one.
+        
+        Args:
+            current (str): Current text.
+            previous (str): Previous text to compare with.
+            
+        Returns:
+            bool: True if texts are very similar, False otherwise.
+        """
+        # Simple check: if more than 80% characters are the same, consider similar
+        current = current.lower()
+        previous = previous.lower()
+        
+        # Compare character sets
+        current_chars = set(current)
+        previous_chars = set(previous)
+        common_chars = current_chars.intersection(previous_chars)
+        
+        if len(common_chars) / max(len(current_chars), len(previous_chars)) > 0.8:
+            # Also check if lengths are similar
+            if abs(len(current) - len(previous)) < 0.3 * max(len(current), len(previous)):
+                return True
+        
+        return False
     
     def generate_summary(self, grant_data: Dict[str, Any]) -> str:
         """
         Generates a comprehensive summary of the grant documentation requirements.
+        Enhanced to provide more structured and readable output.
         
         Args:
             grant_data (Dict[str, Any]): The merged grant data.
@@ -580,21 +775,44 @@ class DocumentationAnalyzer:
             # If we have no data at all, return an empty summary
             return "Nessuna informazione sulla documentazione necessaria trovata per questo bando."
         
+        # Add general grant information if available
+        grant_title = grant_data.get('title', 'Bando')
+        
         # Extract relevant content for each documentation target
         extracted_docs = self.extract_target_documentation(grant_data)
         
+        # Check if we found specific documentation items
+        if not extracted_docs:
+            # If no specific items were found, try to use general documentation info
+            general_docs = grant_data.get('documentation', [])
+            if general_docs:
+                content_parts = []
+                content_parts.append(f"# Documentazione Necessaria per {grant_title}")
+                content_parts.append("\nLe seguenti informazioni sulla documentazione sono state trovate nel bando:\n")
+                
+                for item in general_docs:
+                    if item:
+                        content_parts.append(f"- {item}")
+                
+                # Add a timestamp
+                timestamp = datetime.now().strftime("%d/%m/%Y %H:%M")
+                content_parts.append(f"\n_Ultimo aggiornamento: {timestamp}_")
+                
+                # Add a note about further verification
+                content_parts.append("\n**Nota**: Si consiglia di verificare sempre la documentazione richiesta consultando il testo completo del bando.")
+                
+                return "\n".join(content_parts)
+            else:
+                # If no documentation info at all, provide a basic message
+                return f"""# Documentazione Necessaria per {grant_title}
+
+Non sono state trovate informazioni specifiche sulla documentazione richiesta per questo bando.
+Si consiglia di consultare direttamente il bando disponibile al sito ufficiale per i dettagli sulla documentazione necessaria.
+
+_Ultimo aggiornamento: {datetime.now().strftime("%d/%m/%Y %H:%M")}_
+"""
+        
         # Generate the structured documentation content
-        documentation_content = self.generate_documentation_content(extracted_docs)
+        documentation_content = self.generate_documentation_content(extracted_docs, grant_title)
         
-        summary_parts = []
-        
-        # Add a title
-        if grant_data.get('title'):
-            summary_parts.append(f"# Documentazione Necessaria: {grant_data['title']}")
-        else:
-            summary_parts.append("# Documentazione Necessaria")
-        
-        # Add the documentation content
-        summary_parts.append(documentation_content)
-        
-        return "\n".join(summary_parts)
+        return documentation_content
