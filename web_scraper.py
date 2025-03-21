@@ -463,12 +463,15 @@ class WebScraper:
         sentences = re.split(r'[.!?]\s+', main_content)
         doc_sentences = []
         
+        # Aggressively look for any sentences that might mention documentation requirements
         for sentence in sentences:
             sentence_lower = sentence.lower()
+            
+            # First check for target documentation items
             for doc_item in self.target_documentation:
                 if doc_item["name"].lower() in sentence_lower or any(kw.lower() in sentence_lower for kw in doc_item["keywords"]):
                     clean_sentence = clean_text(sentence)
-                    if clean_sentence and len(clean_sentence) > 20:
+                    if clean_sentence and len(clean_sentence) > 15:
                         doc_sentences.append(clean_sentence)
                         
                         # Also add to specific documentation
@@ -483,7 +486,59 @@ class WebScraper:
                         
                         break
         
+        # Then check for general documentation terms
+        for sentence in sentences:
+            clean_sentence = clean_text(sentence)
+            if clean_sentence and clean_sentence not in doc_sentences:  # Avoid duplicates
+                sentence_lower = sentence.lower()
+                doc_terms = ['document', 'allegat', 'modulistic', 'certificaz', 'dichiaraz', 
+                            'present', 'richiesto', 'necessari', 'obbligo', 'requisit',
+                            'business plan', 'curriculum', 'visura', 'fattur', 'preventiv',
+                            'quietanz', 'ricevut', 'codice fiscale', 'partita iva', 'durc']
+                            
+                if any(term in sentence_lower for term in doc_terms):
+                    if clean_sentence and len(clean_sentence) > 15:
+                        doc_sentences.append(clean_sentence)
+        
         if doc_sentences:
+            structured_info["Documentazione_Fallback"] = doc_sentences
+        
+        # Check ALL paragraphs for documentation keywords - more aggressive approach
+        for p in soup.find_all('p'):
+            p_text = p.get_text().lower()
+            doc_terms = ['document', 'allegat', 'modulistic', 'certificaz', 'dichiaraz', 
+                        'present', 'richiesto', 'necessari', 'obbligo', 'requisit',
+                        'business plan', 'curriculum', 'visura', 'fattur', 'preventiv',
+                        'quietanz', 'ricevut', 'codice fiscale', 'partita iva', 'durc']
+                        
+            if any(term in p_text for term in doc_terms):
+                clean_p = clean_text(p.get_text())
+                if clean_p and len(clean_p) > 15 and clean_p not in doc_sentences:
+                    if "Documentazione_Paragrafi" not in structured_info:
+                        structured_info["Documentazione_Paragrafi"] = []
+                    structured_info["Documentazione_Paragrafi"].append(clean_p)
+        
+        # Look for buttons or links with documentation terms
+        doc_links = []
+        for a in soup.find_all('a', href=True):
+            a_text = a.get_text().lower()
+            a_href = a['href'].lower()
+            
+            doc_terms = ['document', 'allegat', 'modulistic', 'pdf', 'scarica', 'download']
+            if any(term in a_text for term in doc_terms) or any(term in a_href for term in doc_terms):
+                link_text = clean_text(a.get_text())
+                if link_text:
+                    link_info = f"{link_text} - {a['href']}"
+                    if "Documentazione_Links" not in structured_info:
+                        structured_info["Documentazione_Links"] = []
+                    structured_info["Documentazione_Links"].append(link_info)
+                    
+                    # Also add the link text itself as a potential documentation sentence
+                    if len(link_text) > 10 and link_text not in doc_sentences:
+                        doc_sentences.append(link_text)
+        
+        # If we found more sentences, add them to the result
+        if doc_sentences and "Documentazione_Fallback" not in structured_info:
             structured_info["Documentazione_Fallback"] = doc_sentences
     
     def extract_pdf_links(self, html_content: str, base_url: str) -> List[Dict[str, Any]]:

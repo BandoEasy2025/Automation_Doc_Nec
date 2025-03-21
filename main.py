@@ -1,4 +1,3 @@
-# python main.py --grant-id YOUR_GRANT_ID
 """
 Enhanced grant documentation crawler.
 Focuses on extracting specific documentation requirements from grant websites and PDFs.
@@ -48,6 +47,7 @@ def process_grant(grant: Dict[str, Any]) -> Dict[str, Any]:
     
     web_data = []
     pdf_data = []
+    all_documentation_sentences = []  # Track all documentation sentences
     error_messages = []
     
     # Process main grant webpage
@@ -63,6 +63,17 @@ def process_grant(grant: Dict[str, Any]) -> Dict[str, Any]:
                     web_data.append(web_info)
                     logger.info(f"Successfully extracted information from {link_bando}")
                     
+                    # Directly collect any documentation sentences found
+                    if 'structured_info' in web_info:
+                        for key, value in web_info['structured_info'].items():
+                            if key.startswith('Documentazione'):
+                                if isinstance(value, list):
+                                    all_documentation_sentences.extend(value)
+                                elif isinstance(value, dict):
+                                    for doc_type, sentences in value.items():
+                                        if isinstance(sentences, list):
+                                            all_documentation_sentences.extend(sentences)
+                    
                     # Extract PDF links from the main page
                     pdf_links = web_scraper.extract_pdf_links(html_content, link_bando)
                     
@@ -72,29 +83,29 @@ def process_grant(grant: Dict[str, Any]) -> Dict[str, Any]:
                     
                     # Process PDFs with higher priority first, limited to most relevant ones
                     pdfs_to_process = priority_pdfs[:5]  # Process top 5 priority PDFs
-                    if len(pdfs_to_process) < 3:  # If fewer than 3 priority PDFs, add some others
-                        pdfs_to_process.extend(other_pdfs[:3 - len(pdfs_to_process)])
+                    if len(pdfs_to_process) < 5:  # If fewer than 5 priority PDFs, add some others
+                        pdfs_to_process.extend(other_pdfs[:5 - len(pdfs_to_process)])
                     
                     logger.info(f"Found {len(pdfs_to_process)} relevant PDFs to process from {link_bando}")
                     
-                    # Process PDFs in parallel for better performance
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-                        future_to_pdf = {executor.submit(pdf_processor.process_pdf, pdf): pdf for pdf in pdfs_to_process}
-                        
-                        for future in concurrent.futures.as_completed(future_to_pdf):
-                            pdf = future_to_pdf[future]
-                            try:
-                                result = future.result()
-                                if result and not result.get('error'):
-                                    pdf_data.append(result)
-                                    logger.info(f"Processed PDF: {pdf.get('url')}")
-                                else:
-                                    error_msg = result.get('error', 'Unknown error processing PDF')
-                                    logger.warning(f"Error processing PDF {pdf.get('url')}: {error_msg}")
-                                    error_messages.append(f"PDF Error: {error_msg}")
-                            except Exception as e:
-                                logger.error(f"Exception processing PDF {pdf.get('url')}: {str(e)}")
-                                error_messages.append(f"PDF Exception: {str(e)}")
+                    # Process PDFs
+                    for pdf_info in pdfs_to_process:
+                        try:
+                            result = pdf_processor.process_pdf(pdf_info)
+                            if result and not result.get('error'):
+                                pdf_data.append(result)
+                                logger.info(f"Processed PDF: {pdf_info.get('url')}")
+                                
+                                # Directly extract documentation sentences
+                                if 'Documentazione' in result and isinstance(result['Documentazione'], list):
+                                    all_documentation_sentences.extend(result['Documentazione'])
+                            else:
+                                error_msg = result.get('error', 'Unknown error processing PDF')
+                                logger.warning(f"Error processing PDF {pdf_info.get('url')}: {error_msg}")
+                                error_messages.append(f"PDF Error: {error_msg}")
+                        except Exception as e:
+                            logger.error(f"Exception processing PDF {pdf_info.get('url')}: {str(e)}")
+                            error_messages.append(f"PDF Exception: {str(e)}")
             except Exception as e:
                 error_msg = f"Error extracting information from {link_bando}: {str(e)}"
                 logger.error(error_msg)
@@ -117,6 +128,17 @@ def process_grant(grant: Dict[str, Any]) -> Dict[str, Any]:
                     web_data.append(web_info)
                     logger.info(f"Successfully extracted information from {link_sito_bando}")
                     
+                    # Directly collect any documentation sentences found
+                    if 'structured_info' in web_info:
+                        for key, value in web_info['structured_info'].items():
+                            if key.startswith('Documentazione'):
+                                if isinstance(value, list):
+                                    all_documentation_sentences.extend(value)
+                                elif isinstance(value, dict):
+                                    for doc_type, sentences in value.items():
+                                        if isinstance(sentences, list):
+                                            all_documentation_sentences.extend(sentences)
+                    
                     # Extract PDF links from the supplementary page
                     pdf_links = web_scraper.extract_pdf_links(html_content, link_sito_bando)
                     
@@ -126,29 +148,29 @@ def process_grant(grant: Dict[str, Any]) -> Dict[str, Any]:
                     
                     # Process PDFs with higher priority first, limited to most relevant ones
                     pdfs_to_process = priority_pdfs[:3]  # Process top 3 priority PDFs
-                    if len(pdfs_to_process) < 2:  # If fewer than 2 priority PDFs, add some others
-                        pdfs_to_process.extend(other_pdfs[:2 - len(pdfs_to_process)])
+                    if len(pdfs_to_process) < 3:  # If fewer than 3 priority PDFs, add some others
+                        pdfs_to_process.extend(other_pdfs[:3 - len(pdfs_to_process)])
                     
                     logger.info(f"Found {len(pdfs_to_process)} relevant PDFs to process from {link_sito_bando}")
                     
-                    # Process PDFs in parallel for better performance
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-                        future_to_pdf = {executor.submit(pdf_processor.process_pdf, pdf): pdf for pdf in pdfs_to_process}
-                        
-                        for future in concurrent.futures.as_completed(future_to_pdf):
-                            pdf = future_to_pdf[future]
-                            try:
-                                result = future.result()
-                                if result and not result.get('error'):
-                                    pdf_data.append(result)
-                                    logger.info(f"Processed PDF: {pdf.get('url')}")
-                                else:
-                                    error_msg = result.get('error', 'Unknown error processing PDF')
-                                    logger.warning(f"Error processing PDF {pdf.get('url')}: {error_msg}")
-                                    error_messages.append(f"PDF Error: {error_msg}")
-                            except Exception as e:
-                                logger.error(f"Exception processing PDF {pdf.get('url')}: {str(e)}")
-                                error_messages.append(f"PDF Exception: {str(e)}")
+                    # Process PDFs
+                    for pdf_info in pdfs_to_process:
+                        try:
+                            result = pdf_processor.process_pdf(pdf_info)
+                            if result and not result.get('error'):
+                                pdf_data.append(result)
+                                logger.info(f"Processed PDF: {pdf_info.get('url')}")
+                                
+                                # Directly extract documentation sentences
+                                if 'Documentazione' in result and isinstance(result['Documentazione'], list):
+                                    all_documentation_sentences.extend(result['Documentazione'])
+                            else:
+                                error_msg = result.get('error', 'Unknown error processing PDF')
+                                logger.warning(f"Error processing PDF {pdf_info.get('url')}: {error_msg}")
+                                error_messages.append(f"PDF Error: {error_msg}")
+                        except Exception as e:
+                            logger.error(f"Exception processing PDF {pdf_info.get('url')}: {str(e)}")
+                            error_messages.append(f"PDF Exception: {str(e)}")
             except Exception as e:
                 error_msg = f"Error extracting information from {link_sito_bando}: {str(e)}"
                 logger.error(error_msg)
@@ -162,77 +184,93 @@ def process_grant(grant: Dict[str, Any]) -> Dict[str, Any]:
     web_scraper.close()
     pdf_processor.close()
     
-    # Even if nothing was found, still provide some basic documentation
-    if not web_data and not pdf_data:
-        basic_doc = f"""# Documentazione Necessaria per {nome_bando or 'il Bando'}
-
-• Si consiglia di consultare direttamente i link ufficiali per ottenere i dettagli completi
-• Link principale: {link_bando or 'Non disponibile'}
-• Link supplementare: {link_sito_bando or 'Non disponibile'}
-
-## Documentazione Standard
-Generalmente, i bandi di questo tipo potrebbero richiedere:
-
-• Scheda progettuale o business plan
-• Piano finanziario delle entrate e delle spese
-• Documentazione amministrativa (visura camerale, DURC, etc.)
-• Informazioni sulla compagine sociale
-• Dichiarazioni sostitutive
-
-_Ultimo aggiornamento: {datetime.now().strftime("%d/%m/%Y %H:%M")}_
-"""
-        grant['documentation_summary'] = basic_doc
+    # If we found some documentation sentences directly, use them even if further processing fails
+    if all_documentation_sentences:
+        # Remove duplicates
+        all_documentation_sentences = list(dict.fromkeys(all_documentation_sentences))
+        
+        # Create a simple bullet-point document with the found sentences
+        documentation_md = f"# Documentazione Necessaria per {nome_bando or 'il Bando'}\n\n"
+        documentation_md += "Di seguito sono elencati i documenti e le informazioni trovati nel bando:\n\n"
+        
+        for sentence in all_documentation_sentences:
+            documentation_md += f"• {sentence}\n"
+        
+        # Add links for reference
+        documentation_md += f"\n## Link di Riferimento\n"
+        documentation_md += f"• Bando principale: {link_bando or 'Non disponibile'}\n"
+        if link_sito_bando and link_sito_bando != link_bando:
+            documentation_md += f"• Sito supplementare: {link_sito_bando}\n"
+        
+        # Add timestamp
+        documentation_md += f"\n_Ultimo aggiornamento: {datetime.now().strftime('%d/%m/%Y %H:%M')}_"
+        
+        grant['documentation_summary'] = documentation_md
         return grant
     
-    # Merge and analyze web and PDF data
-    try:
-        logger.info(f"Merging and analyzing data for grant {grant_id}")
-        merged_data = doc_analyzer.merge_grant_data(web_data, pdf_data)
-        
-        # Add grant name if available
-        if nome_bando:
-            merged_data['grant_name'] = nome_bando
-            if not merged_data.get('title'):
-                merged_data['title'] = nome_bando
-        
-        # Extract target documentation items based on specified keywords
-        extracted_docs = doc_analyzer.extract_target_documentation(merged_data)
-        
-        # Generate comprehensive documentation in bullet-point format
-        documentation_list = doc_analyzer.generate_documentation_content(extracted_docs, nome_bando)
-        
-        # Log stats about what we found
-        logger.info(f"Found documentation items: {len(merged_data.get('documentation', []))} general items")
-        logger.info(f"Found {len(extracted_docs)} specific documentation types")
-        
-        # Update the grant with the new documentation
-        grant['documentation_summary'] = documentation_list
-        
-        logger.info(f"Completed processing for grant {grant_id}")
-    except Exception as e:
-        logger.error(f"Error analyzing grant {grant_id}: {str(e)}")
-        # Provide a basic documentation message in case of error
-        error_stack = traceback.format_exc()
-        logger.error(f"Stack trace: {error_stack}")
-        
-        basic_message = f"""# Documentazione Necessaria per {nome_bando or 'il Bando'}
-
-• Si consiglia di consultare direttamente il bando ufficiale per i dettagli specifici
-• Link principale: {link_bando or 'Non disponibile'}
-• Link supplementare: {link_sito_bando or 'Non disponibile'}
-
-## Documentazione Standard
-Generalmente, per bandi di questa tipologia, è necessario presentare:
-
-• Documentazione amministrativa dell'impresa (es. visura camerale, DURC, etc.)
-• Documentazione tecnica del progetto
-• Documentazione economico-finanziaria
-• Documentazione relativa agli aspetti di sostenibilità
-
-_Ultimo aggiornamento: {datetime.now().strftime("%d/%m/%Y %H:%M")}_
-"""
-        grant['documentation_summary'] = basic_message
+    # If no direct sentences were found but we have web/pdf data, try the regular analysis
+    if web_data or pdf_data:
+        try:
+            logger.info(f"Merging and analyzing data for grant {grant_id}")
+            merged_data = doc_analyzer.merge_grant_data(web_data, pdf_data)
+            
+            # Add grant name if available
+            if nome_bando:
+                merged_data['grant_name'] = nome_bando
+                if not merged_data.get('title'):
+                    merged_data['title'] = nome_bando
+            
+            # Extract target documentation items based on specified keywords
+            extracted_docs = doc_analyzer.extract_target_documentation(merged_data)
+            
+            # Generate comprehensive documentation in bullet-point format
+            documentation_list = doc_analyzer.generate_documentation_content(extracted_docs, nome_bando)
+            
+            # Log stats about what we found
+            logger.info(f"Found documentation items: {len(merged_data.get('documentation', []))} general items")
+            logger.info(f"Found {len(extracted_docs)} specific documentation types")
+            
+            # Update the grant with the new documentation
+            grant['documentation_summary'] = documentation_list
+            
+            logger.info(f"Completed processing for grant {grant_id}")
+            return grant
+        except Exception as e:
+            logger.error(f"Error analyzing grant {grant_id}: {str(e)}")
+            # Continue to fallback below if this fails
     
+    # Final fallback: provide a more detailed error report instead of the generic message
+    detailed_report = f"""# Documentazione Necessaria per {nome_bando or 'il Bando'}
+
+Non è stato possibile estrarre informazioni specifiche sulla documentazione richiesta.
+
+## Link di Riferimento
+• Bando principale: {link_bando or 'Non disponibile'}
+"""
+    if link_sito_bando and link_sito_bando != link_bando:
+        detailed_report += f"• Sito supplementare: {link_sito_bando}\n"
+
+    detailed_report += """
+## Possibili Documenti Standard 
+I bandi di questa tipologia solitamente richiedono:
+
+• Scheda progettuale o Business plan
+• Piano finanziario delle entrate e delle spese
+• Curriculum vitae dei proponenti
+• Dichiarazioni sul possesso dei requisiti 
+• Preventivi di spesa
+• Documentazione amministrativa dell'impresa
+• Relazioni tecniche e descrittive
+"""
+    
+    if error_messages:
+        detailed_report += "\n## Errori Riscontrati\n"
+        for error in error_messages[:5]:  # Show up to 5 errors
+            detailed_report += f"• {error}\n"
+    
+    detailed_report += f"\n_Ultimo aggiornamento: {datetime.now().strftime('%d/%m/%Y %H:%M')}_"
+    
+    grant['documentation_summary'] = detailed_report
     return grant
 
 def main():
@@ -337,7 +375,7 @@ Generalmente, per bandi di questa tipologia, è necessario presentare:
 • Documentazione tecnica del progetto
 • Documentazione economico-finanziaria
 
-_Ultimo aggiornamento: {datetime.now().strftime("%d/%m/%Y %H:%M")}_
+_Ultimo aggiornamento: {datetime.now().strftime('%d/%m/%Y %H:%M')}_
 """
                     processed_grants.append(grant)
         
